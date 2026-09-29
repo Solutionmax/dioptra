@@ -128,11 +128,13 @@ const {execFileSync} = require('node:child_process');
         try {
           await view.webContents.loadURL('chrome-extension://fcoeoabgfenejglbffodgkkbkcdhcgfn/sidepanel.html');
           return await view.webContents.executeJavaScript(`chrome.runtime.sendMessage({type:'CIC_IFRAME_BRIDGE_INIT',panelTabId:1,sessionId:'impostor'}).then(()=>false,e=>e.message==='Access denied.')`);
-        } finally {view.webContents.close();}
+        } finally {await new Promise(resolve=>{view.webContents.once('destroyed',resolve);view.webContents.close();});}
       });
       assert.equal(impostorPanel,true,'Only the registered sidepanel can use the internal relay');
+      // Mark the old document so the poll cannot mistake it for the reloaded one (slow under Rosetta).
+      await run(`chrome.scripting.executeScript({target:{tabId:${result.tabId}},func:()=>{window.__beforeReload=true;}})`);
       await run(`chrome.tabs.reload(${result.tabId})`);
-      await poll(async()=>{try{return await run(`chrome.scripting.executeScript({target:{tabId:${result.tabId}},func:()=>document.readyState}).then(r=>r[0]?.result)`);}catch{return ''; }},'complete');
+      await poll(async()=>{try{return await run(`chrome.scripting.executeScript({target:{tabId:${result.tabId}},func:()=>!window.__beforeReload&&document.readyState}).then(r=>r[0]?.result)`);}catch{return ''; }},'complete');
       await run(`chrome.scripting.executeScript({target:{tabId:${result.tabId}},func:()=>document.querySelector('button').click()})`);
       await app.evaluate(()=>process.getBuiltinModule('dns').setDefaultResultOrder('ipv4first'));
       await ui.evaluate(()=>window.browser.command('compare'));
