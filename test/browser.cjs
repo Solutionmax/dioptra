@@ -1,0 +1,216 @@
+const { _electron: electron } = require('playwright');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const http = require('node:http');
+const dns = require('node:dns/promises');
+const crypto = require('node:crypto');
+const https = require('node:https');
+const { execFileSync } = require('node:child_process');
+
+(async () => {
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'migration-browser-'));
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(profile, 'key.pem'), '-out', path.join(profile, 'cert.pem'), '-days', '1', '-subj', '/CN=migration.invalid'], { stdio: 'ignore' });
+  let seenSNI;
+  const secureServer = https.createServer({ key: fs.readFileSync(path.join(profile, 'key.pem')), cert: fs.readFileSync(path.join(profile, 'cert.pem')) }, (req, res) => { seenSNI = req.socket.servername; res.end('<title>TLS fixture</title><h1>HTTPS works</h1>'); });
+  await new Promise(resolve => secureServer.listen(0, '127.0.0.1', resolve));
+  const securePort = secureServer.address().port;
+  const server = http.createServer((req, res) => {
+    if (req.url === '/redirect') { res.writeHead(302, { Location: '/page' }); return res.end(); }
+    if (req.url === '/api') { res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify({ host: req.headers.host, cookie: req.headers.cookie })); }
+    if (req.url === '/download') { res.setHeader('Content-Disposition', 'attachment; filename="migration.txt"'); return res.end('download-ok'); }
+    if (req.url === '/auth' && req.headers.authorization !== 'Basic ' + Buffer.from('tester:secret').toString('base64')) { res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Migration test"' }); return res.end('Login required'); }
+    res.setHeader('Content-Type', 'text/html');
+    res.end('<title>Migration fixture</title><h1 id="result">JS pending</h1><input type="file"><a target="_blank" href="/popup">Popup</a><script>document.cookie="migration=yes; SameSite=Lax"; document.querySelector("h1").textContent="JavaScript werkt";</script>');
+  });
+  server.on('upgrade', (req, socket) => {
+    const accept = crypto.createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+    socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + '\r\n\r\n');
+    socket.write(Buffer.from([0x81, 2, 79, 75]));
+    socket.on('error', () => {});
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const settingsFile = path.join(profile, 'settings.json');
+  fs.writeFileSync(settingsFile, JSON.stringify({ rules: [{ domain: 'migration.invalid', ip: '127.0.0.1', enabled: true }], tabs: [`http://migration.invalid:${port}/redirect`], updateFeed: '', autoUpdates: false, autoUpdatesChosen: true }));
+  let app;
+  const launch = () => electron.launch({ timeout: 30000, args: [...(process.getuid?.() === 0 ? ['--no-sandbox', '-r', path.join(__dirname, 'root-harness.cjs')] : []), '.', `--profile-dir=${profile}`], cwd: path.resolve(__dirname, '..'), env: { ...process.env, ELECTRON_DISABLE_SECURITY_WARNINGS: 'true' } });
+  try {
+    app = await launch();
+    const ui = await app.firstWindow();
+    await ui.getByRole('button', { name: 'Domains', exact: true }).waitFor();
+    const page = await app.waitForEvent('window', { predicate: p => p.url().includes('migration.invalid'), timeout: 10000 }).catch(() => app.windows().find(p => p.url().includes('migration.invalid')));
+    assert.ok(page, 'mapped website opens');
+    for (const id of ['view-single', 'compare', 'view-differences']) await ui.locator('#' + id).waitFor();
+    assert.equal(await ui.locator('#view-single').getAttribute('aria-pressed'), 'true', 'Single view is selected');
+    assert.equal(await ui.locator('.preview').count(), 0, 'PREVIEW badge is gone');
+    assert.equal(await ui.locator('#update-notice').isVisible(), false, 'update notice hidden without an update');
+    await ui.locator('#route-bar .badge').filter({ hasText: 'HOSTFILE' }).waitFor();
+    assert.match(await ui.locator('#route-bar').innerText(), /migration\.invalid/);
+    assert.match(await ui.locator('#route-bar').innerText(), /RULE\s*127\.0\.0\.1/i);
+    assert.equal(await ui.locator('#connection-banners').count(), 0, 'old banners are gone');
+    await ui.evaluate(() => render({ ...state, update: { ...state.update, status: 'available', version: '9.9.9', canInstall: false } }));
+    assert.equal((await ui.locator('#update-notice').innerText()).trim(), 'Update 9.9.9 available');
+    assert.equal(await ui.evaluate(() => document.getElementById('open-release').hidden), false, 'manual update shows the download page button');
+    await ui.evaluate(() => render({ ...state, update: { ...state.update, status: 'idle' } }));
+    assert.equal(await ui.locator('#update-notice').isVisible(), false);
+    const report = { url: 'http://migration.invalid/', comparedAt: Date.now(), hostfile: { ip: '127.0.0.1', status: 200, ms: 12 }, live: { ip: '203.0.113.9', status: 200, ms: 1300 }, domains: [{ host: 'evil.example', hostfile: false, live: true, types: ['script'] }, { host: 'cdn.example', hostfile: true, live: true, types: ['image'] }], html: { changedLines: 1, lines: [{ side: 'both', text: '<body>' }, { side: 'live', text: '<script>alert(1)</script><img src=x onerror=alert(2)>' }] }, headers: [{ name: 'server', hostfile: 'nginx', live: 'LiteSpeed' }], findings: [{ severity: 'high', title: 'Unknown script <b>only</b> on Live', detail: 'evil.example' }] };
+    await ui.evaluate(r => render({ ...state, view: 'differences', differences: { status: 'done', report: r } }), report);
+    await ui.locator('#differences').getByText('External domains').first().waitFor();
+    assert.equal(await ui.locator('#view-differences').getAttribute('aria-pressed'), 'true');
+    assert.match(await ui.locator('#differences').innerText(), /1 only on Live/);
+    assert.equal(await ui.locator('#differences .finding.high b').innerText(), 'Unknown script <b>only</b> on Live', 'report text is rendered as text');
+    assert.equal(await ui.locator('#differences b b, #differences img[onerror]').count(), 0, 'no markup injected from the report');
+    await ui.locator('#differences .subtabs button', { hasText: 'HTML' }).click();
+    assert.match(await ui.locator('#differences .code .live').innerText(), /alert\(1\)/);
+    await ui.evaluate(() => render({ ...state, view: 'single', differences: { status: 'idle' } }));
+    assert.equal(await ui.locator('#differences').isVisible(), false);
+    await ui.getByRole('button', { name: 'Settings', exact: true }).click();
+    await ui.getByRole('heading', { name: 'Settings', exact: true }).waitFor();
+    assert.equal(await ui.locator('#clear-site-data').isVisible(), true, 'Clear site data button in Settings');
+    assert.match(await ui.locator('#settings-section').innerText(), /current site only/);
+    assert.equal(await ui.locator('#rule-form').isVisible(), false);
+    await ui.getByRole('button', { name: 'Updates', exact: true }).click();
+    await ui.getByRole('heading', { name: 'Updates', exact: true }).waitFor();
+    await ui.getByRole('button', { name: 'Close panel', exact: true }).click();
+    await ui.evaluate(async () => { for (let i = 0; i < 3; i++) await window.browser.command('devtools'); });
+    assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1, 'DevTools must stay inside browser');
+    await ui.waitForFunction(() => document.querySelector('#devtools').getAttribute('aria-pressed') === 'true');
+    const views = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].contentView.children.map(v => v.getBounds()));
+    assert.ok(views.some(v => v.y > 132 && v.height > 100), 'DevTools occupies lower part of browser');
+    await ui.getByRole('button', { name: 'Dock Developer Tools right', exact: true }).click();
+    let dockState = (await ui.evaluate(() => window.browser.command('state'))).state;
+    assert.equal(dockState.devtoolsDock, 'right');
+    assert.ok(dockState.toolsLayout.tools.x > dockState.toolsLayout.page.x);
+    assert.equal(dockState.toolsLayout.tools.y, 164);
+    const splitter = ui.getByRole('separator', { name: 'Resize Developer Tools' });
+    const sizeBefore = dockState.toolsLayout.tools.width;
+    const box = await splitter.boundingBox();
+    await ui.mouse.move(box.x + box.width / 2, box.y + 50);
+    await ui.mouse.down();
+    await ui.mouse.move(box.x - 75, box.y + 50, { steps: 5 });
+    await ui.mouse.up();
+    await ui.waitForFunction(() => document.getElementById('tools-drag-shield').hidden);
+    dockState = (await ui.evaluate(() => window.browser.command('state'))).state;
+    assert.ok(dockState.toolsLayout.tools.width > sizeBefore, 'drag border increases inspector width');
+    const cancelBox = await splitter.boundingBox();
+    const ratioBeforeCancel = dockState.devtoolsRatio;
+    await ui.mouse.move(cancelBox.x + 3, cancelBox.y + 50);
+    await ui.mouse.down();
+    await ui.mouse.move(cancelBox.x - 50, cancelBox.y + 50, { steps: 3 });
+    await ui.keyboard.press('Escape');
+    await ui.mouse.up();
+    await ui.waitForFunction(() => document.getElementById('tools-drag-shield').hidden);
+    assert.equal((await ui.evaluate(() => window.browser.command('state'))).state.devtoolsRatio, ratioBeforeCancel, 'Escape cancels inspector resizing');
+    await splitter.press('ArrowUp');
+    assert.equal((await ui.evaluate(() => window.browser.command('state'))).state.devtoolsRatio, ratioBeforeCancel, 'orthogonal arrow does not resize');
+    await splitter.press('ArrowLeft');
+    assert.ok((await ui.evaluate(() => window.browser.command('state'))).state.devtoolsRatio > ratioBeforeCancel, 'matching arrow resizes inspector');
+    const grip = await ui.getByRole('button', { name: 'Move Developer Tools', exact: true }).boundingBox();
+    await ui.mouse.move(grip.x + 15, grip.y + 15);
+    await ui.mouse.down();
+    await ui.mouse.move(20, 280, { steps: 5 });
+    await ui.mouse.up();
+    await ui.waitForFunction(() => document.querySelector('[data-dock=left]').getAttribute('aria-pressed') === 'true');
+    await ui.waitForFunction(() => document.getElementById('tools-drag-shield').hidden);
+    assert.equal((await ui.evaluate(() => window.browser.command('state'))).state.devtoolsDock, 'left');
+    await ui.getByRole('button', { name: 'Dock Developer Tools bottom', exact: true }).click();
+
+    await ui.getByRole('button', { name: 'Developer Tools', exact: true }).click();
+    await ui.waitForFunction(() => document.querySelector('#devtools').getAttribute('aria-pressed') === 'false');
+    await ui.getByRole('button', { name: 'Developer Tools', exact: true }).click();
+    await ui.waitForFunction(() => document.querySelector('#devtools').getAttribute('aria-pressed') === 'true');
+    await ui.evaluate(async () => { await window.browser.command('devtools'); await window.browser.command('devtools'); });
+    await app.evaluate(async ({ BrowserWindow }) => {
+      const tools = BrowserWindow.getAllWindows()[0].contentView.children.find(v => v.webContents.getURL().startsWith('devtools:'));
+      if (!tools) throw new Error('Embedded DevTools frontend did not load');
+      if (tools.webContents.isLoading()) await new Promise(resolve => tools.webContents.once('did-finish-load', resolve));
+    });
+    assert.equal((await ui.evaluate(() => window.browser.command('state'))).state.tabs[0].devtools, true, 'rapid toggles retain the final requested state');
+    await ui.getByRole('button', { name: 'New tab', exact: true }).click();
+    assert.equal(await ui.getByRole('button', { name: 'Developer Tools', exact: true }).getAttribute('aria-pressed'), 'false');
+    await ui.getByRole('button', { name: 'Close tab New tab', exact: true }).click();
+    await ui.waitForFunction(() => document.querySelector('#devtools').getAttribute('aria-pressed') === 'true');
+    await ui.getByRole('button', { name: 'Developer Tools', exact: true }).click();
+    await page.waitForSelector('#result');
+    assert.equal(await page.locator('#result').innerText(), 'JavaScript werkt');
+    assert.ok(page.url().endsWith('/page'), 'redirect works');
+    assert.equal(await page.evaluate(() => typeof window.browser), 'undefined', 'websites cannot access privileged UI API');
+    assert.equal(await page.evaluate(() => typeof require), 'undefined', 'websites cannot access Node');
+    const api = await page.evaluate(() => fetch('/api').then(r => r.json()));
+    assert.equal(api.host, `migration.invalid:${port}`);
+    assert.equal(api.cookie, 'migration=yes');
+    const ws = await page.evaluate(() => new Promise((resolve, reject) => { const ws = new WebSocket(`ws://${location.host}/socket`); ws.onmessage = e => { resolve(e.data); ws.close(); }; ws.onerror = reject; }));
+    assert.equal(ws, 'OK');
+    const [popup] = await Promise.all([
+      app.waitForEvent('window', { predicate: p => p !== ui && p !== page }),
+      page.evaluate(() => { const popup = window.open('', '_blank'); popup.document.write('<title>Blank popup</title><h1>Popup content</h1>'); popup.document.close(); })
+    ]);
+    await popup.getByRole('heading', { name: 'Popup content' }).waitFor();
+    const startVisible = await ui.locator('#welcome').isVisible();
+    assert.equal(startVisible, false, 'script-populated blank popup must not display the app welcome screen');
+    await ui.getByRole('button', { name: 'Close tab Blank popup' }).click();
+    // Website TLS must work without test-only certificate exceptions.
+    await ui.evaluate(url => window.browser.command('navigate', url), `https://migration.invalid:${securePort}/`);
+    await page.getByRole('heading', { name: 'HTTPS works' }).waitFor({ timeout: 10000 }).catch(async error => { console.error('TLS retry state', page.url(), JSON.stringify(await ui.evaluate(() => window.browser.command('state'))), await page.locator('body').innerText()); throw error; });
+    assert.equal(seenSNI, 'migration.invalid', 'TLS SNI retains original domain');
+    assert.equal(await ui.locator('#page-error').isVisible(), false, 'untrusted certificate does not block website');
+    assert.match(await page.evaluate(() => fetch('/resource').then(r => r.text())), /HTTPS works/, 'HTTPS subrequests work');
+    await ui.evaluate(url => window.browser.command('navigate', url), `https://127.0.0.1:${securePort}/`);
+    await page.getByRole('heading', { name: 'HTTPS works' }).waitFor();
+    assert.equal(page.url(), `https://127.0.0.1:${securePort}/`, 'certificate hostname mismatch is also skipped');
+    const defaultSessionResult = await app.evaluate(async ({ session }, url) => {
+      try { await session.defaultSession.fetch(url); return 'accepted'; }
+      catch { return 'rejected'; }
+    }, `https://127.0.0.1:${securePort}/`);
+    assert.equal(defaultSessionResult, 'rejected', 'update/default session still checks certificates');
+    await ui.evaluate(url => window.browser.command('navigate', url), `http://migration.invalid:${port}/auth`);
+    await ui.getByLabel('Username', { exact: true }).fill('tester');
+    await ui.getByLabel('Password', { exact: true }).fill('secret');
+    await ui.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await page.getByRole('heading', { name: 'JavaScript werkt' }).waitFor();
+    const downloadPath = path.join(profile, 'migration.txt');
+    await app.evaluate(({ session }, dest) => { globalThis.testDownload = new Promise(resolve => { session.fromPartition('persist:web').once('will-download', (_event, item) => { item.setSavePath(dest); item.once('done', (_event, status) => resolve(status)); }); }); }, downloadPath);
+    await page.evaluate(() => { const a = document.createElement('a'); a.href = '/download'; document.body.append(a); a.click(); });
+    assert.equal(await app.evaluate(() => Promise.race([globalThis.testDownload, new Promise(resolve => setTimeout(() => resolve('timeout'), 10000))])), 'completed');
+    assert.equal(fs.readFileSync(downloadPath, 'utf8'), 'download-ok');
+    await ui.waitForFunction(() => document.getElementById('address').value.endsWith('/auth'), { timeout: 5000 });
+    await assert.rejects(dns.lookup('migration.invalid'), 'OS resolver unchanged');
+    await ui.getByRole('button', { name: 'Domains', exact: true }).click();
+    await ui.evaluate(() => { window.testRuleNode = document.querySelector('#rules .rule'); });
+    await ui.evaluate(() => window.browser.command('state').then(r => window.browser.command('activate', r.state.activeId)));
+    assert.equal(await ui.evaluate(() => window.testRuleNode === document.querySelector('#rules .rule')), true, 'unchanged rules retain their DOM during tab updates');
+    await ui.getByLabel('Domain', { exact: true }).fill('second.invalid');
+    await ui.getByLabel('IP address', { exact: true }).fill('::1');
+    await ui.getByRole('button', { name: 'Add', exact: true }).click();
+    await ui.getByText('second.invalid', { exact: true }).waitFor();
+    assert.match(await ui.locator('#pending').innerText(), /restart/i);
+    await ui.getByRole('button', { name: 'Remove second.invalid' }).click();
+    await ui.getByText('second.invalid', { exact: true }).waitFor({ state: 'detached' });
+    await ui.getByLabel('Domain', { exact: true }).fill('saved.invalid');
+    await ui.getByLabel('IP address', { exact: true }).fill('127.0.0.2');
+    await ui.getByRole('button', { name: 'Add', exact: true }).click();
+    await ui.getByText('saved.invalid', { exact: true }).waitFor();
+    fs.mkdirSync('artifacts', { recursive: true });
+    const screenshot = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].capturePage()).toPNG().toString('base64'));
+    fs.writeFileSync('artifacts/browser-ui.png', Buffer.from(screenshot, 'base64'));
+    await app.close(); app = null;
+    assert.equal(JSON.parse(fs.readFileSync(settingsFile)).rules.length, 2);
+    assert.equal(JSON.parse(fs.readFileSync(settingsFile)).devtoolsDock, 'bottom');
+    assert.ok(JSON.parse(fs.readFileSync(settingsFile)).devtoolsRatio > .4);
+    app = await launch();
+    const restored = await app.firstWindow();
+    await restored.getByLabel('Username', { exact: true }).fill('tester');
+    await restored.getByLabel('Password', { exact: true }).fill('secret');
+    await restored.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await restored.getByRole('button', { name: 'Domains', exact: true }).click();
+    await restored.getByText('saved.invalid', { exact: true }).waitFor();
+    console.log('PASS: real Chromium routing, Host, TLS SNI, website certificate bypass, default-session certificate rejection, redirects, JS, cookies, fetch, WebSocket, blank popups, HTTP authentication, downloads, isolated web privileges, OS DNS isolation, rule CRUD and restart persistence.');
+  } finally {
+    if (app) await app.close();
+    server.closeAllConnections(); server.close();
+    secureServer.closeAllConnections(); secureServer.close();
+    fs.rmSync(profile, { recursive: true, force: true });
+  }
+})().catch(e => { console.error(e); process.exit(1); });

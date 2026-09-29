@@ -1,0 +1,73 @@
+{
+  "name": "migratiebrowser",
+  "productName": "Dioptra",
+  "desktopName": "migratiebrowser.desktop",
+  "version": "0.7.0",
+  "description": "A browser with per-domain IP overrides for migration testing",
+  "author": {
+    "name": "SolutionMAX",
+    "url": "https://solutionmax.net"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/core.test.cjs test/crx.test.cjs test/claude-network.test.cjs test/library.test.cjs test/live-proxy.test.cjs test/differences.test.cjs",
+    "test:site": "node test/site-data.cjs",
+    "test:browser": "node test/browser.cjs",
+    "dist:linux": "electron-builder --linux AppImage --x64 --publish never",
+    "dist:mac": "electron-builder --mac zip --arm64 --x64 --publish never",
+    "test:claude": "node test/claude.cjs",
+    "test:claude-session": "node test/claude-session.cjs",
+    "test:workspace": "node test/workspace.cjs"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9",
+    "yauzl": "3.4.0"
+  },
+  "devDependencies": {
+    "electron": "44.4.5",
+    "electron-builder": "26.15.3",
+    "playwright": "1.63.0"
+  },
+  "build": {
+    "appId": "net.solutionmax.migratiebrowser",
+    "icon": "build/icon.png",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "src/app-update.yml",
+        "to": "app-update.yml"
+      }
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "artifactName": "Dioptra-${version}-${os}-${arch}.${ext}",
+    "linux": {
+      "category": "Network",
+      "target": [
+        "AppImage"
+      ],
+      "syncDesktopName": true
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "identity": "-"
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://github.com/Solutionmax/dioptra/releases/latest/download/"
+    },
+    "copyright": "Copyright © 2026 SolutionMAX"
+  }
+}

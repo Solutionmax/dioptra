@@ -1,0 +1,22 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const { extensionId, verifiedZip } = require('../src/crx.cjs');
+test('CRX installer verifies publisher identity and signed payload; rejects tampering and malformed headers', () => {
+  const {publicKey,privateKey}=crypto.generateKeyPairSync('rsa',{modulusLength:2048});
+  const key=publicKey.export({type:'spki',format:'der'}), id=extensionId(key);
+  const varint=n=>{const bytes=[];do{bytes.push((n&127)|(n>127?128:0));n=Math.floor(n/128);}while(n);return Buffer.from(bytes);};
+  const field=(tag,data)=>Buffer.concat([varint(tag*8+2),varint(data.length),data]);
+  const signed=field(1,crypto.createHash('sha256').update(key).digest().subarray(0,16));
+  const size=Buffer.alloc(4);size.writeUInt32LE(signed.length);
+  const payload=Buffer.from('signed archive payload');
+  const signature=crypto.sign('sha256',Buffer.concat([Buffer.from('CRX3 SignedData\0'),size,signed,payload]),privateKey);
+  const header=Buffer.concat([field(2,Buffer.concat([field(1,key),field(2,signature)])),field(10000,signed)]);
+  const prefix=Buffer.alloc(12);prefix.write('Cr24');prefix.writeUInt32LE(3,4);prefix.writeUInt32LE(header.length,8);
+  const crx=Buffer.concat([prefix,header,payload]);
+  assert.deepEqual(verifiedZip(crx,id),payload);
+  assert.throws(()=>verifiedZip(crx,'a'.repeat(32)),/identity/);
+  const changed=Buffer.from(crx);changed[changed.length-1]^=1;
+  assert.throws(()=>verifiedZip(changed,id),/signature/);
+  assert.throws(()=>verifiedZip(crx.subarray(0,15),id),/header/);
+});
