@@ -119,6 +119,7 @@ $('auth-dialog').addEventListener('cancel', event => { event.preventDefault(); c
 command('state').then(result => { if (result.ok) render(result.state); });
 
 $('maker-website').onclick = () => command('new-tab', 'https://solutionmax.net/');
+$('maker-coffee').onclick = () => command('new-tab', 'https://buymeacoffee.com/solutionmax');
 $('tools-close').onclick = () => command('devtools');
 document.querySelectorAll('[data-dock]').forEach(button => { button.onclick = () => command('devtools-layout', { dock: button.dataset.dock }); });
 let toolsDrag = null;

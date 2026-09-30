@@ -137,6 +137,10 @@ npm run dist:mac          # macOS zips for Apple silicon and Intel
 npm run dist:linux        # Linux AppImage
 ```
 
+## Support the work
+
+Dioptra is free and MIT licensed. If it saved you a migration headache, you can [buy me a coffee](https://buymeacoffee.com/solutionmax). It helps pay for the Apple Developer ID, so future macOS builds open without the security warning.
+
 ## License
 
 [MIT](LICENSE) © 2026 [SolutionMAX](https://solutionmax.net)
