@@ -1,0 +1,103 @@
+// Route bar and footer extras against a real site: reverse DNS name, certificate card, site platform card,
+// memory card, version in the footer and Clear cache reload.
+// Needs internet (valid public certificate, PTR record, a WordPress site). Run: xvfb-run -a npm run test:routebar
+// With xdotool under a window manager (Linux) the clicks are real mouse clicks.
+const { _electron: electron } = require('playwright');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+(async () => {
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'dioptra-routebar-'));
+  const site = process.env.ROUTEBAR_SITE || 'https://wordpress.org/', shots = process.env.ROUTEBAR_SHOTS;
+  fs.writeFileSync(path.join(profile, 'settings.json'), JSON.stringify({ rules: [], tabs: [site], sslVerification: true, autoUpdates: false, autoUpdatesChosen: true }));
+  const app = await electron.launch({ executablePath: process.env.DIOPTRA_TEST_EXECUTABLE || undefined, args: [...(process.getuid?.() === 0 ? ['--no-sandbox', '-r', path.join(__dirname, 'root-harness.cjs')] : []), ...(process.env.DIOPTRA_TEST_EXECUTABLE ? [] : ['.']), `--profile-dir=${profile}`], cwd: path.resolve(__dirname, '..') });
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  try {
+    const ui = await app.firstWindow(); ui.setDefaultTimeout(30000);
+    await ui.waitForFunction(() => window.browser);
+    const bar = ui.locator('#route-bar');
+    const views = () => app.evaluate(({ BaseWindow }) => BaseWindow.getAllWindows()[0].contentView.children.length);
+    const topBounds = () => app.evaluate(({ BaseWindow }) => BaseWindow.getAllWindows()[0].contentView.children.at(-1).getBounds());
+    const content = () => app.evaluate(({ BaseWindow }) => BaseWindow.getAllWindows()[0].getContentSize());
+    let realClick = null;
+    try { execFileSync('xdotool', ['version'], { stdio: 'ignore' }); realClick = async locator => { const r = await locator.boundingBox(), c = await app.evaluate(({ BaseWindow }) => BaseWindow.getAllWindows()[0].getContentBounds()); const run = (...a) => execFileSync('xdotool', a); run('mousemove', String(Math.round(c.x + r.x + r.width / 2)), String(Math.round(c.y + r.y + r.height / 2))); run('mousedown', '1'); await sleep(120); run('mouseup', '1'); }; } catch {}
+    const click = locator => realClick ? realClick(locator) : locator.click();
+    const screen = name => { if (shots && realClick) try { execFileSync('import', ['-window', 'root', path.join(shots, name)]); } catch {} };
+    const cardPage = async () => { const until = Date.now() + 15000; for (;;) { const page = app.windows().find(w => w.url().includes('card.html')); if (page) return page; if (Date.now() > until) throw new Error('card did not open'); await sleep(100); } };
+    const cardText = async needle => { const page = await cardPage(); await page.waitForFunction(text => document.body.innerText.includes(text), needle); await sleep(400); return (await page.locator('body').innerText()).replace(/\s+/g, ' '); };
+    // A real user clicks in the focused window with the page focused.
+    await app.evaluate(({ app, BaseWindow }) => { const w = BaseWindow.getAllWindows()[0]; app.focus({ steal: true }); w.show(); w.focus(); });
+    console.log('real mouse:', Boolean(realClick));
+
+    // 1. Hostname behind the IP.
+    await bar.locator('.ptr').waitFor();
+    assert.match(await bar.locator('.ptr').innerText(), /^[a-z0-9.-]+\.[a-z]+$/i, 'reverse DNS name is shown behind the connected IP');
+    const before = await views();
+
+    // 2. Certificate card: opens, shows issuer and expiry, toggles, closes on Escape and on clicks elsewhere.
+    const cert = bar.locator('button.cert-btn'); await cert.waitFor();
+    await click(cert);
+    const certText = await cardText('days left');
+    assert.match(certText, /Certificate valid/); assert.match(certText, /ISSUED TO \S+/i); assert.match(certText, /ISSUER \S+/i);
+    assert.match(certText, /EXPIRES \d{1,2} \w{3} \d{4}/i); assert.match(certText, /\d+ days? left/);
+    assert.equal(await views(), before + 1, 'card is a native view above the page');
+    let b = await topBounds();
+    assert.ok(b.y >= 132 && b.height > 100 && b.height < 260 && b.width === 330, `certificate card below the bar: ${JSON.stringify(b)}`);
+    await app.evaluate(({ BaseWindow }) => BaseWindow.getAllWindows()[0].contentView.children.at(-1).webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }));
+    await sleep(400); assert.equal(await views(), before, 'Escape closes the card');
+    await click(cert); await cardText('days left'); assert.equal(await views(), before + 1, 'card opens again');
+    await click(ui.locator('#address')); await sleep(500); assert.equal(await views(), before, 'click in the window UI closes the card');
+    await click(cert); await cardText('days left'); await click(cert); await sleep(500);
+    assert.equal(await views(), before, 'the button toggles');
+    if (realClick) { await click(cert); await cardText('days left'); await click(ui.locator('#canvas')); await sleep(500); assert.equal(await views(), before, 'click in the website closes the card'); }
+
+    // 3. Site platform chip and card.
+    const chip = bar.locator('button.site-btn'); await chip.waitFor();
+    assert.match(await chip.innerText(), /WordPress/, 'platform is shown in the route bar');
+    await click(chip);
+    const siteText = await cardText('What this site runs on');
+    assert.match(siteText, /PLATFORM WordPress/i); assert.match(siteText, /from the (generator tag|file paths in the page)/);
+    screen('site.png');
+    // Opening another card replaces the open one.
+    await click(cert); await cardText('days left'); assert.equal(await views(), before + 1, 'one card at a time');
+    await click(cert); await sleep(500);
+
+    // 4. Memory card: opens upward from the footer, lists the tab, a row jumps to its tab.
+    const ram = ui.locator('#memory-usage');
+    assert.match(await ram.innerText(), /^RAM [\d.]+ [MG]B$/);
+    await click(ram);
+    const memText = await cardText('Dioptra itself');
+    assert.match(memText, /Memory [\d.]+ [MG]B/); assert.match(memText, /TAB ?.+ [\d.]+ [MG]B/); assert.match(memText, /1 tab · \d+ processes/);
+    b = await topBounds(); const [, height] = await content();
+    assert.ok(b.y + b.height <= height - 30 && b.y > 132, `memory card sits above the footer: ${JSON.stringify(b)}`);
+    screen('memory.png');
+    await (await cardPage()).locator('a.mem-row').first().click(); await sleep(600);
+    assert.equal(await views(), before, 'a tab row closes the card and jumps to the tab');
+
+    // 5. Version in the footer opens the Updates panel with the explanation.
+    const version = ui.locator('#footer-version');
+    assert.match(await version.innerText(), /^Dioptra v\d+\.\d+\.\d+$/);
+    await click(version); await ui.locator('#update-section').waitFor();
+    assert.match(await ui.locator('#update-version').innerText(), /^Dioptra v\d+\.\d+\.\d+$/);
+    assert.equal(await ui.locator('#how-steps li').count(), 3, 'three steps explain how updates work');
+    screen('updates.png');
+    await ui.locator('#close-panel').click().catch(() => ui.evaluate(() => window.browser.command('panel', null)));
+
+    // 6. Clear cache also reloads the page.
+    await app.evaluate(({ webContents }, origin) => { globalThis.__loads = 0; for (const wc of webContents.getAllWebContents()) if (wc.getURL().startsWith(origin)) wc.on('did-finish-load', () => globalThis.__loads++); }, new URL(site).origin);
+    await ui.locator('#clear-cache').click();
+    const until = Date.now() + 20000; while (!(await app.evaluate(() => globalThis.__loads)) && Date.now() < until) await sleep(100);
+    assert.equal(await app.evaluate(() => globalThis.__loads), 1, 'page reloaded once after Clear cache');
+    await bar.locator('.ptr').waitFor(); await chip.waitFor();
+    if (shots) await ui.screenshot({ path: path.join(shots, 'bar.png') });
+    console.log('PASS: reverse DNS name, certificate card, site platform card, memory card, footer version and Updates panel, Clear cache reload.');
+    console.log(' cert:', certText); console.log(' site:', siteText); console.log(' memory:', memText);
+  } finally {
+    const exited = new Promise(r => app.process().exitCode !== null ? r() : app.process().once('exit', r));
+    await app.evaluate(({ app }) => app.quit()).catch(() => {});
+    await Promise.race([exited, sleep(20000)]);
+    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
+})().catch(error => { console.error(error); process.exit(1); });

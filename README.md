@@ -24,7 +24,8 @@ A browser for website migrations: open any site on its new server before DNS cha
 Moving a website to a new server usually means editing `/etc/hosts`, flushing DNS, and guessing which server you are actually looking at. Dioptra does this inside one browser window instead:
 
 - **Domain rules, only in this browser.** Point `example.com` to your new server's IP. Your system hosts file, other browsers and colleagues are not affected.
-- **Always know where you are.** The route bar shows the rule, the IP you are really connected to, the certificate state and the HTTP status.
+- **Always know where you are.** The route bar shows the rule, the IP you are really connected to with its reverse DNS name, the certificate state and the HTTP status.
+- **See what the site runs on.** WordPress, WooCommerce, Drupal, Laravel and more, with the PHP version when the server reports it. In Compare a different PHP version on the old and new server is marked.
 - **Compare.** The new server and the live site side by side, each with its own cookies.
 - **Differences.** Dioptra fetches the page from both servers and shows what changed in the HTML, the headers and the external domains the page loads. Injected scripts and other signs of a hacked site stand out immediately.
 - **Claude built in.** Install the official Claude in Chrome extension and let Claude read, click and screenshot your tabs, including both sides of a comparison.
@@ -73,9 +74,21 @@ Open **Domains**, enter the domain and the IP address of the new server (IPv4 or
 
 ### 2. Browse the new server
 
-Type the normal address. The blue **HOSTFILE** badge in the route bar means the page came from your rule. The bar shows the rule IP, the IP Dioptra actually connected to (with a match check), the certificate state and the HTTP status with load time. Pages without a rule show a green **LIVE** badge.
+Type the normal address. The blue **HOSTFILE** badge in the route bar means the page came from your rule. The bar shows the rule IP, the IP Dioptra actually connected to (with a match check) and the reverse DNS name of that IP, the certificate state and the HTTP status with load time. Pages without a rule show a green **LIVE** badge.
 
 ![Single view with the route bar showing Hostfile, rule IP, connected IP and certificate state](docs/screenshots/single.png)
+
+Three things in the window open a small card with details:
+
+- **Certificate valid** (with SSL verification on): who the certificate was issued to, the issuer and the expiry date with the days left.
+- **Site**: the platform Dioptra recognised, shop, theme, plugins that are visible in the page, PHP version and web server. This is read from what the page itself gives away (generator tag, file paths, cookie names, headers). When nothing is recognised, nothing is shown.
+- **RAM** in the footer: memory per tab, so you can see which site is heavy. Click a tab to jump to it.
+
+![Certificate card with issuer and expiry date](docs/screenshots/certificate.png)
+
+![Site card showing WordPress, WooCommerce, theme, plugins, PHP version and web server](docs/screenshots/site.png)
+
+![Memory card listing memory per tab](docs/screenshots/memory.png)
 
 ### 3. Compare with the live site
 
@@ -103,6 +116,7 @@ Compare shows you whether both sides *look* the same. Differences shows what the
 ### 5. Settings
 
 - **Verify website SSL certificates:** off by default so test servers with self-signed or mismatched certificates still open. Turn it on for strict checking (applies after a restart).
+- **Clear cache** (footer): clears the cache and DNS cache and reloads the page, in Compare both panes. Cookies and logins are kept.
 - **Clear site data:** removes cookies, storage, service workers and cache for the current site only. Handy when an old session hides what the new server does. Claude and sign-in services are never cleared this way.
 - **Bookmarks, history and downloads** live under the Library button in the toolbar.
 - **Developer Tools** open inside the window and can be docked left, right or below (F12).
@@ -111,7 +125,9 @@ Compare shows you whether both sides *look* the same. Differences shows what the
 
 ### Updates
 
-Dioptra checks for new releases at startup and every four hours. When an update is available, a notice appears at the top right of the window. Click it to open **Updates**: on Linux you can download and install the update there, on macOS **Open download page** takes you to the new release. You can turn automatic checks off in **Settings → Updates**.
+The footer shows the installed version. Dioptra checks for new releases at startup and every four hours; nothing installs by itself. When an update is available, the footer and a notice at the top right tell you. Click either to open **Updates**: on Linux you can download and install the update there, on macOS **Open download page** takes you to the new release, where you download the zip and replace the app. You can turn automatic checks off in **Settings → Updates**.
+
+![Updates panel with the installed version and how updates work](docs/screenshots/updates.png)
 
 ### Claude
 

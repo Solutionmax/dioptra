@@ -75,3 +75,22 @@ test('updates default to the GitHub feed and automatic checks, unless the user t
     assert.equal(readSettings(file).autoUpdates, false);
   } finally { fs.rmSync(dir, { recursive: true }); }
 });
+
+test('certificate summary keeps only the shown fields and counts days left', () => {
+  const { certSummary, daysLeft } = require('../src/core.cjs');
+  const cert = { subjectName: 'fallback', subject: { commonName: 'shop.example' }, issuerName: 'R13', issuer: { commonName: 'R13', organizations: ["Let's Encrypt"] }, validStart: 1789430400, validExpiry: 1797206400, data: 'PEM' };
+  assert.deepEqual(certSummary(cert), { subject: 'shop.example', issuer: "Let's Encrypt", issuerName: 'R13', validFrom: 1789430400000, expires: 1797206400000 });
+  assert.equal(certSummary({ issuerName: 'x' }), null, 'no dates, no card');
+  assert.equal(certSummary({ ...cert, subject: { commonName: 'a'.repeat(500) } }).subject.length, 200);
+  assert.equal(daysLeft(1797206400000, 1797206400000 - 74.5 * 86400000), 74);
+  assert.equal(daysLeft(1000, 86400000 + 1000), -1);
+});
+
+test('PTR query names for IPv4 and IPv6, nothing for non addresses', () => {
+  const { ptrName } = require('../src/core.cjs');
+  assert.equal(ptrName('212.125.139.107'), '107.139.125.212.in-addr.arpa');
+  assert.equal(ptrName('::ffff:1.2.3.4'), '4.3.2.1.in-addr.arpa');
+  assert.equal(ptrName('[2606:4700:4700::1111]'), '1.1.1.1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.7.4.0.0.7.4.6.0.6.2.ip6.arpa');
+  assert.equal(ptrName('::1'), '1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa');
+  assert.equal(ptrName('1.2.3.4, 5.6.7.8'), ''); assert.equal(ptrName('example.com'), ''); assert.equal(ptrName(''), '');
+});

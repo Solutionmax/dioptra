@@ -1,4 +1,5 @@
 const { createLiveProxy } = require('./live-proxy.cjs');
+const { detectSite } = require('./site-detect.cjs');
 const { createLibrary } = require('./library.cjs');
 const { randomUUID } = require('node:crypto');
 const { shareClaudeSession } = require('./claude-session.cjs');
@@ -9,7 +10,7 @@ const fs = require('node:fs/promises');
 const { createClaude } = require('./claude.cjs');
 const { installClaude, directoryName } = require('./claude-install.cjs');
 const { pathToFileURL } = require('node:url');
-const { ROUTE_BAR_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, validateRules, resolverRules, navigationURL, readSettings, saveSettings } = require('./core.cjs');
+const { ptrName, certSummary, daysLeft, ROUTE_BAR_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, validateRules, resolverRules, navigationURL, readSettings, saveSettings } = require('./core.cjs');
 const { fetchDocument, buildReport, summaryText } = require('./differences.cjs');
 
 // Keep the original profile through the Hostlane and Dioptra renames.
@@ -61,16 +62,89 @@ function samplePerformance() {
     performance={memoryKB:memory.length && memory.every(n=>Number.isFinite(n)&&n>=0) ? memory.reduce((sum,n)=>sum+n,0) : null,processes:metrics.length};
   } catch {performance={memoryKB:null,processes:0};}
   if(win && !win.isDestroyed()) win.webContents.send('performance',performance);
+  if (card?.kind === 'memory') { const mine = card; renderCard(memoryData()).then(height => { if (card === mine) placeCard(height); }, () => {}); }
 }
 let findState = { open: false, text: '', matches: 0, active: 0 };
 const closedTabs = [], downloadItems = new Map();
 const visibleComparison = () => comparison && [comparison.host, comparison.live].includes(activeId) ? comparison : null;
 function protectedHost(host) { return ['claude.ai','claude.com','anthropic.com','claudeusercontent.com','google.com','googleapis.com','gstatic.com','apple.com','microsoftonline.com'].some(domain => host === domain || host.endsWith('.' + domain)); }
-function certificatePolicy(ses) { ses.setCertificateVerifyProc((request, callback) => callback(activeSSL || protectedHost(request.hostname.toLowerCase()) ? -3 : 0)); }
+// Certificates Chromium itself verified, per route and hostname, for the details card behind "Certificate valid".
+// Limit: grows with every visited hostname until restart; cap it if that ever shows up in RAM.
+const certificates = new Map(), certKey = (mode, host) => `${mode === 'live' ? 'live' : 'hostfile'}:${host}`;
+function certificatePolicy(ses) {
+  ses.setCertificateVerifyProc((request, callback) => {
+    const host = request.hostname.toLowerCase(), key = certKey(ses === liveSession ? 'live' : 'hostfile', host);
+    const summary = /^(net::)?OK$/.test(request.verificationResult) ? certSummary(request.certificate) : null;
+    if (summary) certificates.set(key, summary); else certificates.delete(key);
+    callback(activeSSL || protectedHost(host) ? -3 : 0);
+  });
+}
+// Reverse DNS (PTR) name of a connected IP, looked up once per IP. No record or a failed lookup shows nothing.
+const reverseNames = new Map();
+function reverseName(ip) {
+  const name = ptrName(ip);
+  if (!name) return Promise.resolve('');
+  if (!reverseNames.has(name)) reverseNames.set(name, dns.resolvePtr(name).then(names => String(names[0] || '').replace(/\.$/, '').slice(0, 253), () => ''));
+  return reverseNames.get(name);
+}
+// Small cards (certificate, site platform, memory). The website is a native view on top of the window UI, so a card
+// is a small native view of its own. Opening and closing never depend on focus events: those differ per platform.
+// The button toggles, a click anywhere else or Escape closes.
+let card = null;
+function closeCard() {
+  if (!card) return;
+  const { view } = card; card = null;
+  if (win && !win.isDestroyed()) win.contentView.removeChildView(view);
+  view.webContents.close();
+}
+function memoryData() {
+  const kb = new Map(app.getAppMetrics().map(p => [p.pid, p.memory?.workingSetSize || 0])), groups = new Map();
+  const pidOf = wc => { try { return wc.getOSProcessId(); } catch { return 0; } };
+  // Tabs of the same site can share one process; such a group is one row.
+  for (const t of tabs.values()) { const pid = pidOf(t.view.webContents); if (!kb.has(pid)) continue; const g = groups.get(pid) || { id: t.id, label: t.mode === 'live' ? 'LIVE' : 'TAB', title: String(t.title || 'New tab').slice(0, 120), more: -1, kb: kb.get(pid) }; g.more++; groups.set(pid, g); }
+  const rows = [...groups.values()].sort((x, y) => y.kb - x.kb), claudePid = claudeView ? pidOf(claudeView.webContents) : 0;
+  const claudeKB = kb.has(claudePid) && !groups.has(claudePid) ? kb.get(claudePid) : 0, total = [...kb.values()].reduce((sum, n) => sum + n, 0);
+  return { total, rows, claude: claudeKB, rest: Math.max(0, total - claudeKB - rows.reduce((sum, r) => sum + r.kb, 0)), tabs: tabs.size, processes: kb.size };
+}
+function cardData(kind, id) {
+  if (kind === 'memory') return memoryData();
+  const tab = tabs.get(id); if (!tab) return null;
+  if (kind === 'site') return tab.site || null;
+  const cert = kind === 'cert' && route(tab).cert && certificates.get(certKey(tab.mode, route(tab).host));
+  return cert ? { ...cert, daysLeft: daysLeft(cert.expires) } : null;
+}
+function placeCard(height) {
+  const [width, full] = win.getContentSize(), w = Math.min(card.kind === 'cert' ? 330 : 340, width - 16), anchor = card.anchor;
+  card.view.setBounds({ x: Math.max(8, Math.min(Math.round(Number(anchor?.right) || width) - w + 7, width - w - 8)), y: card.kind === 'memory' ? Math.max(8, full - 30 - 8 - height) : 132 + 5, width: w, height });
+}
+const renderCard = data => card.view.webContents.executeJavaScript(`render(${JSON.stringify({ kind: card.kind, ...data })})`).then(Math.ceil);
+async function openCard(kind, id, anchor) {
+  if (card) { const same = card.kind === kind && card.id === id; closeCard(); if (same) return; }
+  if (!['cert', 'site', 'memory'].includes(kind)) return;
+  const data = cardData(kind, id); if (!data) return;
+  const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+  const wc = view.webContents, mine = card = { view, kind, id, anchor };
+  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // The card has no bridge to the app. Its two actions are links to a reserved, never loaded address that is handled here.
+  wc.on('will-navigate', (event, url) => {
+    event.preventDefault();
+    const [, action, target] = url.match(/^https:\/\/card\.invalid\/(activate|reload)\/(\d+)$/) || [];
+    const tab = tabs.get(Number(target)); if (!tab || card !== mine || kind !== 'memory') return;
+    closeCard(); activate(tab.id); if (action === 'reload') { tab.error = ''; tab.view.webContents.reload(); }
+  });
+  wc.on('before-input-event', (event, input) => { if (input.type === 'keyDown' && input.key === 'Escape') { event.preventDefault(); closeCard(); win.webContents.focus(); } });
+  await wc.loadFile(path.join(__dirname, 'card.html'));
+  if (card !== mine) return;
+  // Width first, so the text wraps as it will be shown; then the height the content needs.
+  view.setBorderRadius(10); placeCard(1); win.contentView.addChildView(view);
+  const height = await renderCard(data);
+  if (card === mine) placeCard(height);
+}
 function route(tab) {
   let host = ''; try { host = new URL(tab.url).hostname; } catch {}
   const rule = tab.mode === 'hostfile' && activeRules.find(r => r.enabled && r.domain === host);
-  return { label: rule ? 'HOSTFILE' : 'LIVE', configured: rule?.ip || '', host, ssl: !tab.url.startsWith('https:') ? 'HTTP · no TLS' : activeSSL || protectedHost(host) || tab.mode === 'auth' ? 'SSL checks on' : 'SSL checks off' };
+  const ssl = !tab.url.startsWith('https:') ? 'HTTP · no TLS' : activeSSL || protectedHost(host) || tab.mode === 'auth' ? 'SSL checks on' : 'SSL checks off';
+  return { label: rule ? 'HOSTFILE' : 'LIVE', configured: rule?.ip || '', host, ssl, cert: ssl === 'SSL checks on' && tab.mode !== 'auth' && certificates.has(certKey(tab.mode, host)) };
 }
 const tabs = new Map();
 const current = () => tabs.get(activeId);
@@ -82,7 +156,7 @@ function persist() {
   if (serialized !== lastSavedSettings) { saveSettings(settingsFile, config); lastSavedSettings = serialized; }
 }
 function state() {
-  return { view: visibleComparison() ? 'compare' : viewMode, routeBarHeight: visibleComparison() ? 0 : ROUTE_BAR_HEIGHT, differences: viewMode === 'differences' ? differences : { ...differences, report: null }, performance, comparison: visibleComparison(), paneLayout, find: findState, sslVerification: config.sslVerification, activeSSL, library: library?.snapshot() || {bookmarks:[],history:[],downloads:[]}, downloads: [...downloadItems.values()].map(d=>d.record), tabs: [...tabs.values()].map(t => ({ mode: t.mode, route: route(t), connection: t.connection, id: t.id, title: t.title, url: t.url, startPage: t.startPage, loading: t.loading, devtools: Boolean(t.toolsOpen), error: t.error, back: t.view.webContents.navigationHistory.canGoBack(), forward: t.view.webContents.navigationHistory.canGoForward() })), activeId, rules: config.rules, activeRules, pending: pending(), panel, versions: { app: app.getVersion(), electron: process.versions.electron, chromium: process.versions.chrome }, updateFeed: updateFeed(), autoUpdates: config.autoUpdates, update: updateState, devtoolsDock: config.devtoolsDock, devtoolsRatio: config.devtoolsRatio, toolsLayout, draggingTools, claude: claudeState };
+  return { view: visibleComparison() ? 'compare' : viewMode, routeBarHeight: visibleComparison() ? 0 : ROUTE_BAR_HEIGHT, differences: viewMode === 'differences' ? differences : { ...differences, report: null }, performance, comparison: visibleComparison(), paneLayout, find: findState, sslVerification: config.sslVerification, activeSSL, library: library?.snapshot() || {bookmarks:[],history:[],downloads:[]}, downloads: [...downloadItems.values()].map(d=>d.record), tabs: [...tabs.values()].map(t => ({ mode: t.mode, route: route(t), site: t.site || null, connection: t.connection, id: t.id, title: t.title, url: t.url, startPage: t.startPage, loading: t.loading, devtools: Boolean(t.toolsOpen), error: t.error, back: t.view.webContents.navigationHistory.canGoBack(), forward: t.view.webContents.navigationHistory.canGoForward() })), activeId, rules: config.rules, activeRules, pending: pending(), panel, platform: process.platform, versions: { app: app.getVersion(), electron: process.versions.electron, chromium: process.versions.chrome }, updateFeed: updateFeed(), autoUpdates: config.autoUpdates, update: updateState, devtoolsDock: config.devtoolsDock, devtoolsRatio: config.devtoolsRatio, toolsLayout, draggingTools, claude: claudeState };
 }
 function emit() {
   // Tab views are destroyed while quitting; state() must not touch them then.
@@ -90,6 +164,7 @@ function emit() {
 }
 function layout() {
   if (!win || win.isDestroyed()) return;
+  closeCard();
   const [width, height] = win.getContentSize();
   const sidebar = panel ? Math.min(480, Math.floor(width * .48)) : 0;
   if (claudeView) { claudeView.setBounds({ x: width - sidebar, y: 132, width: Math.max(1, sidebar), height: Math.max(1,height - 162) }); claudeView.setVisible(panel === 'claude' && !authRequest && !draggingTools); }
@@ -127,6 +202,7 @@ function allowed(url) { return url === 'about:blank' || /^https?:\/\//i.test(url
 function handleShortcut(event,input,tab=current()) {
   if(!tab) return; const wc=tab.view.webContents;
     if (input.type !== 'keyDown') return;
+    if (input.key === 'Escape') closeCard();
     const mod = input.control || input.meta;
     const key = input.key.toLowerCase();
     if (mod && key === 'l') { event.preventDefault(); focusAddress(); }
@@ -143,13 +219,14 @@ function bindTab(view, initial = 'about:blank', load = true, foreground = true) 
   tabs.set(tab.id, tab); win.contentView.addChildView(view);
   const wc = view.webContents;
   claude?.bind(tab);
+  wc.on('input-event', (_event, input) => { if (input.type === 'mouseDown') closeCard(); });
   wc.on('focus', () => { if (visibleComparison() && activeId !== tab.id) activate(tab.id); });
   wc.on('found-in-page', (_event,result) => { if (tab.id === activeId && findState.open) { findState.matches=result.matches; findState.active=result.activeMatchOrdinal; emit(); } });
   wc.on('page-title-updated', (_event, title) => { tab.title = title || 'New tab'; emit(); });
   wc.on('did-start-loading', () => { tab.loading = true; emit(); });
-  wc.on('did-stop-loading', () => { tab.loading = false; if (!tab.error && allowed(wc.getURL())) { tab.url = wc.getURL(); if(tab.mode !== 'auth') library.visit(tab.url, wc.getTitle()); persist(); } emit(); });
+  wc.on('did-stop-loading', () => { tab.loading = false; if (!tab.error && allowed(wc.getURL())) { tab.url = wc.getURL(); if(tab.mode !== 'auth') library.visit(tab.url, wc.getTitle()); persist(); inspectSite(tab); } emit(); });
   wc.on('did-start-navigation', (_event, url, inPlace, isMainFrame) => {
-    if (isMainFrame && !inPlace) { if (tab.id === activeId) viewMode = 'single'; tab.navStart = Date.now(); tab.connection = null; tab.url = url; if (url !== 'about:blank') tab.startPage = false; tab.error = ''; layout(); emit(); }
+    if (isMainFrame && !inPlace) { if (tab.id === activeId) viewMode = 'single'; tab.navStart = Date.now(); tab.connection = null; tab.site = null; tab.siteHeaders = {}; tab.url = url; if (url !== 'about:blank') tab.startPage = false; tab.error = ''; layout(); emit(); }
   });
   const navigated = (_event, url) => { tab.url = url; tab.error = ''; persist(); layout(); emit(); };
   wc.on('did-navigate', navigated);
@@ -336,6 +413,21 @@ async function compare() {
   comparison={host:tab.id,live:live.id}; activeId=tab.id; panel=null; layout();emit();
   } finally { comparing=false; }
 }
+// What the page gives away about its platform; read in an isolated world so the page cannot see or change the probe.
+const SITE_PROBE = `({ generators: [...document.querySelectorAll('meta[name="generator" i]')].slice(0, 20).map(m => String(m.content).slice(0, 200)), urls: [...document.querySelectorAll('script[src],link[href],img[src]')].slice(0, 600).map(n => String(n.src || n.href).slice(0, 400)) })`;
+async function inspectSite(tab) {
+  const wc = tab.view.webContents, url = wc.getURL();
+  if (tab.mode === 'auth' || !/^https?:\/\//i.test(url)) return;
+  try {
+    const page = await wc.executeJavaScriptInIsolatedWorld(1005, [{ code: SITE_PROBE }]);
+    const cookies = (await wc.session.cookies.get({ url })).map(c => c.name);
+    if (wc.isDestroyed() || wc.getURL() !== url) return;
+    tab.site = detectSite({ headers: tab.siteHeaders, cookies, ...page }); emit();
+  } catch (error) {
+    // Expected when the page navigates away or closes mid-probe; the next load probes again.
+    if (process.env.DIOPTRA_DEBUG) console.error('site probe failed:', error.message);
+  }
+}
 function observeConnections(ses) {
   // Does not replace Claude's onCompleted/onBeforeSendHeaders handlers.
   ses.webRequest.onResponseStarted(details => {
@@ -348,7 +440,9 @@ function observeConnections(ses) {
       ip=liveProxy.addresses(u.hostname, Number(u.port || (u.protocol==='https:'?443:80))).join(', ');
       source='active server connections';
     }
-    tab.connection={url:details.url,ip:details.fromCache ? '' : ip,fromCache:Boolean(details.fromCache),source,status:details.statusCode,ms:tab.navStart ? Date.now()-tab.navStart : 0}; emit();
+    tab.connection={url:details.url,ip:details.fromCache ? '' : ip,fromCache:Boolean(details.fromCache),source,status:details.statusCode,ms:tab.navStart ? Date.now()-tab.navStart : 0}; tab.siteHeaders=details.responseHeaders || {}; emit();
+    const connection=tab.connection;
+    if (connection.ip && !connection.ip.includes(',')) reverseName(connection.ip).then(name => { if (name && tab.connection === connection) { connection.hostname = name; emit(); } });
   });
 }
 function setupWebsiteSession(ses) {
@@ -389,8 +483,8 @@ function setupUpdater() {
     updater.autoDownload = false; updater.autoInstallOnAppQuit = false;
     const set = (status, message, details = {}) => { updateState = { ...updateState, status, message, ...details }; if (manualUpdate && ['available', 'downloaded'].includes(status)) { panel = 'updates'; layout(); } emit(); };
     updater.on('checking-for-update', () => set('checking', 'Checking for updates…'));
-    updater.on('update-available', info => set('available', `Version ${info.version} is available.`, { version: info.version, progress: 0, notes: typeof info.releaseNotes === 'string' ? info.releaseNotes : (info.releaseNotes || []).map(n => n.note).join('\n') }));
-    updater.on('update-not-available', () => set('current', 'You are running the latest available version.'));
+    updater.on('update-available', info => set('available', `Version ${info.version} is available.`, { version: info.version, date: info.releaseDate || '', checkedAt: Date.now(), progress: 0, notes: typeof info.releaseNotes === 'string' ? info.releaseNotes : (info.releaseNotes || []).map(n => n.note).join('\n') }));
+    updater.on('update-not-available', () => set('current', 'You are running the latest available version.', { checkedAt: Date.now() }));
     updater.on('download-progress', info => set('downloading', `Downloading: ${Math.round(info.percent)}%`, { progress: info.percent }));
     updater.on('update-downloaded', () => set('downloaded', 'Update ready. Restart to install.'));
     updater.on('error', error => set('error', `Update failed: ${error.message}`));
@@ -509,7 +603,19 @@ ipcMain.handle('browser', async (event, action, data) => {
         break;
       }
       case 'claude-options': await openClaudePanel('options.html'); break;
-      case 'clear-cache': await webSession.clearCache(); await webSession.clearHostResolverCache(); await webSession.closeAllConnections(); break;
+      case 'clear-cache': {
+        for (const ses of [webSession, liveSession].filter(Boolean)) { await ses.clearCache(); await ses.clearHostResolverCache(); await ses.closeAllConnections(); }
+        // Reload what is on screen so the cleared cache is visible right away: the active tab, or both panes in Compare.
+        const pair = visibleComparison();
+        for (const shown of (pair ? [pair.host, pair.live] : [activeId]).map(id => tabs.get(id))) {
+          if (!shown || shown.startPage || shown.url === 'about:blank') continue;
+          shown.error = ''; shown.view.webContents.reloadIgnoringCache();
+        }
+        layout(); emit();
+        break;
+      }
+      case 'card': await openCard(String(data?.kind), Number(data?.id) || 0, data); break;
+      case 'card-close': closeCard(); break;
       case 'auth': finishAuth(data); break;
       case 'update-settings': {
         if (checkingUpdate || ['downloading', 'downloaded'].includes(updateState.status)) throw new Error('Finish the current update before changing its source.');

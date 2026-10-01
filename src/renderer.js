@@ -79,8 +79,7 @@ function render(next) {
   if (document.activeElement !== $('feed')) $('feed').value = state.updateFeed;
   $('check-update').disabled = !state.updateFeed || ['checking', 'downloading'].includes(state.update.status);
   $('download-update').hidden = state.update.status !== 'available'; $('install-update').hidden = state.update.status !== 'downloaded';
-  $('update-title').textContent = { available: 'An update is available', downloading: 'Downloading your update', downloaded: 'Ready to restart', error: 'Update could not be completed' }[state.update.status] || 'Keep Dioptra up to date';
-  $('update-version').textContent = state.update.version ? `Dioptra ${state.versions.app} → ${state.update.version}` : `Installed: Dioptra ${state.versions.app}`;
+  renderUpdateDetails();
   $('update-progress').hidden = state.update.status !== 'downloading';
   $('update-progress').value = state.update.progress || 0;
   $('release-notes').hidden = !state.update.notes;
@@ -105,7 +104,7 @@ $('settings').onclick = () => command('panel', state.panel === 'settings' ? null
 $('open-updates').onclick = $('update-notice').onclick = () => command('panel', 'updates');
 $('back').onclick = () => command('back'); $('forward').onclick = () => command('forward'); $('reload').onclick = () => command(state.tabs.find(t => t.id === state.activeId)?.loading ? 'stop' : 'reload'); $('retry').onclick = () => command('reload');
 $('apply').onclick = () => command('restart'); $('devtools').onclick = () => command('devtools');
-$('clear-cache').onclick = async () => { if ((await command('clear-cache')).ok) toast('Cache and DNS cache cleared. Cookies and logins were kept.'); };
+$('clear-cache').onclick = async () => { if ((await command('clear-cache')).ok) toast('Cache and DNS cache cleared, page reloaded. Cookies and logins were kept.'); };
 $('feed-form').onsubmit = event => { event.preventDefault(); command('update-settings', { feed: $('feed').value, automatic: $('auto-updates').checked }); };
 $('auto-updates').onchange = () => command('update-settings', { feed: state.updateFeed, automatic: $('auto-updates').checked });
 $('check-update').onclick = () => command('check-update'); $('download-update').onclick = () => command('download-update'); $('install-update').onclick = () => command('install-update');
@@ -198,9 +197,9 @@ function renderPerformance(metrics) {
   state.performance=metrics;
   const memoryKB=metrics?.memoryKB;
   const memory=Number.isFinite(memoryKB) && memoryKB>=0 ? (memoryKB>=1048576 ? `${(memoryKB/1048576).toFixed(2)} GB` : `${Math.round(memoryKB/1024)} MB`) : '—';
-  $('memory-usage').textContent=`Dioptra RAM ${memory}`;
-  $('memory-usage').title=`${state.tabs.length} ${state.tabs.length===1?'tab':'tabs'} · ${metrics?.processes ?? 0} processes. ${memory==='—'?'Memory measurement unavailable.':'Summed process working set estimate; shared memory pages may be counted more than once.'}`;
-  $('memory-usage').setAttribute('aria-label',`${$('memory-usage').textContent}. ${$('memory-usage').title}`);
+  $('memory-usage').textContent=`RAM ${memory}`;
+  $('memory-usage').title=memory==='—'?'Memory measurement unavailable.':'Click to see memory per tab. Estimate: shared memory can be counted more than once.';
+  $('memory-usage').setAttribute('aria-label',`Dioptra uses ${memory} of memory, show details per tab`);
 }
 window.browser.onPerformance(renderPerformance);
 function renderWorkspace() {
@@ -224,7 +223,7 @@ function renderWorkspace() {
   if(state.comparison) for(const pane of state.paneLayout) {
     const t=state.tabs.find(t=>t.id===pane.id);if(!t) continue;
     const selected=t.id===state.activeId;
-    const bar=routeBar(t,{pane:true,selected});place(bar,pane.banner);bar.classList.toggle('compact',pane.banner.width<800);$('pane-bars').append(bar);
+    const bar=routeBar(t,{pane:true,selected,peer:state.tabs.find(o=>o.id!==t.id&&[state.comparison?.host,state.comparison?.live].includes(o.id))});place(bar,pane.banner);bar.classList.toggle('compact',pane.banner.width<800);$('pane-bars').append(bar);
     if(t.error) {
       const error=el('div','comparison-error');place(error,pane.page);
       error.append(el('h2','',`${t.route.label} could not load`),el('p','',t.url),el('code','',t.error));
@@ -266,7 +265,8 @@ $('view-differences').onclick=async()=>{
   if(d?.status!=='running' && !(d?.status==='done' && d.report?.url===tab?.url)) command('differences-run');
 };
 $('clear-site-data').onclick=async()=>{ if((await command('clear-site-data')).ok) toast('Site data cleared for this site.'); };
-$('open-release').onclick=()=>command('open-release');
+$('open-release').onclick=$('release-page').onclick=()=>command('open-release');
+$('footer-version').onclick=()=>command('panel','updates');
 $('bookmark').onclick=()=>command('bookmark');
 $('library').onclick=$('open-library').onclick=()=>command('panel','library');
 $('open-find').onclick=()=>command('find-open');
@@ -293,16 +293,64 @@ const ICONS = {
   shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
   alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
   info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
-  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  chevron: '<path d="m6 9 6 6 6-6"/>'
 };
 function icon(name) { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.innerHTML = ICONS[name]; return svg; }
 function setIcon(node, name) { if (node.dataset.icon === name) return; node.dataset.icon = name; node.replaceChildren(icon(name)); }
+const HOW = {
+  general: ['How updates work', ['Dioptra checks GitHub for a new release at start and every 4 hours.', 'You see it in the footer and at the top right. Nothing installs by itself.', 'You choose when. Tabs and domain rules come back after the restart.'], ''],
+  manual: ['How to update on macOS', ['Open the download page and get the zip for your Mac: Apple Silicon or Intel.', 'Quit Dioptra and drag the new app over the old one in Applications.', 'Open it. Rules, tabs and logins are kept.'], 'The Mac build is not notarized yet, so it cannot replace itself.'],
+  auto: ['How to update', ['Click Download update. The file is checked against its checksum.', 'Click Install and restart when it suits you.', 'Dioptra reopens on the new version with your tabs.'], '']
+};
+let howKey = '';
+function renderUpdateDetails() {
+  const u = state.update, updating = ['available', 'downloading', 'downloaded'].includes(u.status), installed = `v${state.versions.app}`;
+  $('update-card').className = `update-card ${u.status === 'downloaded' ? 'green' : updating ? 'blue' : u.status === 'error' ? 'red' : ''}`;
+  $('update-title').textContent = { available: 'New version', downloading: 'Downloading', downloaded: 'Ready to install', error: 'Update could not be completed', checking: 'Checking' }[u.status] || 'Installed';
+  $('update-version').textContent = updating && u.version ? `${installed} → v${u.version}` : `Dioptra ${installed}`;
+  const released = updating && u.date && !Number.isNaN(Date.parse(u.date)) ? new Date(u.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+  const pill = u.status === 'current' ? 'up to date' : released;
+  $('update-pill').hidden = !pill; $('update-pill').textContent = pill; $('update-pill').className = `pill-s ${u.status === 'current' ? 'g' : 'b'}`;
+  const checked = u.checkedAt ? `Last checked ${new Date(u.checkedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : '';
+  $('update-message').textContent = u.status === 'current' && checked ? `${checked} · ${state.autoUpdates ? 'checks again every 4 hours' : 'automatic checks are off'}` : u.message;
+  const key = !updating ? 'general' : u.canInstall === false ? 'manual' : 'auto';
+  if (key !== howKey) { howKey = key; const [title, steps, hint] = HOW[key]; $('how-title').textContent = title; $('how-steps').replaceChildren(...steps.map(step => el('li', '', step))); $('how-hint').textContent = hint; $('how-hint').hidden = !hint; }
+  const footer = $('footer-version');
+  footer.className = u.status === 'downloaded' ? 'ready' : updating ? 'new' : '';
+  footer.textContent = u.status === 'downloaded' ? `v${u.version} ready · restart to update` : updating && u.version ? `Dioptra ${installed} · v${u.version} available` : `Dioptra ${installed}`;
+}
 function currentView() { return state.view || (state.comparison ? 'compare' : 'single'); }
 function withIcon(className, name, text) { const n = el('span', className); n.append(icon(name), text); return n; }
 function kv(label, value, className = 'v') { const n = el('span', 'kv'); n.append(el('span', 'k', label), el('span', className, value)); return n; }
 const bareIP = ip => String(ip || '').replace(/^\[|\]$/g, '').replace(/^::ffff:/, '');
 function formatMs(ms) { return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`; }
-function routeBar(t, { pane = false, selected = false } = {}) {
+// Any click in the window UI outside the button closes the certificate card; the button itself toggles it.
+// Handled on the document and on pointerdown: the bar is rebuilt on every state update, so a button can be replaced between press and release and would then never get its click.
+function toggleCard(button) { const r = button.getBoundingClientRect(); command('card', { kind: button.dataset.card, id: Number(button.dataset.tab) || 0, right: r.right, bottom: r.bottom }); }
+document.addEventListener('pointerdown', event => { const button = event.button === 0 && event.target.closest?.('[data-card]'); if (button) toggleCard(button); else command('card-close'); }, true);
+document.addEventListener('click', event => { const button = event.detail === 0 && event.target.closest?.('[data-card]'); if (button) toggleCard(button); });
+// Platform and PHP of the site in one chip; in Compare the parts that differ from the other pane are marked.
+function siteChip(t, peer) {
+  const s = t.site; if (!s || t.loading || t.error) return null;
+  const button = el('button', 'site-btn'); button.type = 'button'; button.dataset.card = 'site'; button.dataset.tab = t.id; button.setAttribute('aria-haspopup', 'dialog');
+  const value = el('span', 'site-v'), other = peer?.site;
+  const part = (name, version, differs) => { if (value.childNodes.length) value.append(' · '); value.append(name); if (version) { value.append(' '); value.append(el('small', differs ? 'differs' : '', version)); } };
+  if (s.platform) part(s.platform, s.version, Boolean(other?.platform) && (other.platform !== s.platform || other.version !== s.version));
+  if (s.php) part('PHP', s.php, Boolean(other?.php) && other.php !== s.php);
+  button.append(el('span', 'k', 'Site'), value);
+  button.setAttribute('aria-label', `Site runs on ${value.textContent}, show details`);
+  return button;
+}
+function certButton(t) {
+  const button = el('button', 'ok cert-btn'); button.type = 'button';
+  const chevron = icon('chevron'); chevron.classList.add('chev');
+  button.append(icon('check'), el('span', 'cert-text', 'Certificate valid'), chevron);
+  button.setAttribute('aria-label', 'Certificate valid, show issuer and expiry date'); button.setAttribute('aria-haspopup', 'dialog');
+  button.dataset.card = 'cert'; button.dataset.tab = t.id;
+  return button;
+}
+function routeBar(t, { pane = false, selected = false, peer = null } = {}) {
   const label = t.route.label === 'HOSTFILE' ? 'Hostfile' : t.route.label === 'LIVE' ? 'Live' : t.route.label;
   const bar = el('div', `route-bar ${t.route.label.toLowerCase()}${selected ? ' active' : ''}`);
   const badge = pane ? el('button', 'badge', t.route.label) : el('span', 'badge', t.route.label);
@@ -311,7 +359,9 @@ function routeBar(t, { pane = false, selected = false } = {}) {
   if (t.route.configured) { const rule = kv('Rule', t.route.configured); rule.classList.add('rule'); bar.append(rule); }
   const ips = bareIP(t.connection?.ip), fromCache = t.connection?.fromCache;
   const measured = t.loading ? 'Connecting…' : t.error ? 'Not connected' : fromCache ? 'Cached · IP not measured' : ips ? ips : 'IP not available';
-  const connected = kv(t.route.label === 'LIVE' ? 'Live' : 'Connected', measured);
+  const connected = kv(t.route.label === 'LIVE' ? 'Live' : 'Connected', measured); connected.classList.add('conn');
+  const ptr = ips && !t.loading && !t.error && !fromCache ? t.connection?.hostname : '';
+  if (ptr) { const name = el('span', 'ptr', ptr); name.title = `Reverse DNS (PTR) of ${ips}: ${ptr}`; connected.append(name); }
   if (ips && !t.loading && !t.error && t.route.configured) {
     const match = ips.split(',').map(s => bareIP(s.trim())).includes(bareIP(t.route.configured));
     connected.append(withIcon(match ? 'ok' : 'bad', match ? 'check' : 'x', match ? 'match' : 'mismatch'));
@@ -319,14 +369,15 @@ function routeBar(t, { pane = false, selected = false } = {}) {
   bar.append(connected);
   const right = el('span', 'route-right');
   const ssl = t.route.ssl, secure = t.url.startsWith('https:');
+  const chip = siteChip(t, peer); if (chip) right.append(chip);
   if (t.error) right.append(withIcon('bad', 'alert', el('span', 'cert-text', /CERT|SSL/i.test(t.error) ? 'Strict certificate error' : 'Load error')));
-  else if (secure) right.append(ssl === 'SSL checks off' ? withIcon('warn', 'shield', el('span', 'cert-text', 'Certificate check skipped')) : withIcon('ok', 'check', el('span', 'cert-text', 'Certificate valid')));
+  else if (secure) right.append(ssl === 'SSL checks off' ? withIcon('warn', 'shield', el('span', 'cert-text', 'Certificate check skipped')) : t.route.cert ? certButton(t) : withIcon('ok', 'check', el('span', 'cert-text', 'Certificate valid')));
   else if (t.url !== 'about:blank') right.append(withIcon('warn', 'info', el('span', 'cert-text', 'No TLS')));
   const status = t.connection?.status ?? t.connection?.statusCode, ms = t.connection?.ms ?? t.connection?.time;
   if (status) right.append(kv('HTTP', Number.isFinite(ms) ? `${status} · ${formatMs(ms)}` : String(status)));
   bar.append(right);
   const source = t.connection?.source === 'active server connections' ? 'Observed server connections for this host and port. Multiple IPs may be shown.' : 'Server IP observed for this page response. Cached pages may have no network connection.';
-  const details = `${label} · ${t.route.host || 'New tab'}${t.route.configured ? `\nHostfile IP ${t.route.configured}` : ''}\n${measured} · ${ssl}\n${source}`;
+  const details = `${label} · ${t.route.host || 'New tab'}${t.route.configured ? `\nHostfile IP ${t.route.configured}` : ''}\n${measured}${ptr ? ` · ${ptr}` : ''} · ${ssl}\n${source}`;
   bar.title = details; badge.setAttribute('aria-description', details);
   return bar;
 }

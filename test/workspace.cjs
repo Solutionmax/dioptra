@@ -35,7 +35,7 @@ const { execFileSync } = require('node:child_process');
     let s=(await cmd('state')).state;
     assert.ok(s.performance.memoryKB>0,'Actual browser process memory is sampled');
     assert.ok(s.performance.processes>0);
-    assert.match(await ui.locator('#memory-usage').innerText(),/Dioptra RAM [\d.]+ [MG]B/);
+    assert.match(await ui.locator('#memory-usage').innerText(),/RAM [\d.]+ [MG]B/);
     assert.ok(s.comparison,'comparison active');assert.equal(s.tabs.filter(t=>t.mode==='live').length,1,'double Compare creates only one Live tab');
     const mapped=s.tabs.find(t=>t.mode==='hostfile'); const normal=s.tabs.find(t=>t.mode==='live');
     assert.equal(mapped.connection.ip.replace(/^\[|\]$/g,''),'::1');

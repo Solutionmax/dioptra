@@ -68,4 +68,20 @@ function saveSettings(file, data) {
   fs.writeFileSync(`${file}.tmp`, JSON.stringify(data, null, 2), { mode: 0o600 });
   fs.renameSync(`${file}.tmp`, file);
 }
-module.exports = { ROUTE_BAR_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, validateRules, resolverRules, navigationURL, readSettings, saveSettings };
+// Only the fields the certificate details card shows; names come from the server, so they are capped.
+function certSummary(cert) {
+  if (!cert || !Number.isFinite(cert.validStart) || !Number.isFinite(cert.validExpiry)) return null;
+  const text = value => String(value || '').slice(0, 200);
+  return { subject: text(cert.subject?.commonName || cert.subjectName), issuer: text(cert.issuer?.organizations?.[0] || cert.issuer?.commonName || cert.issuerName), issuerName: text(cert.issuer?.commonName), validFrom: cert.validStart * 1000, expires: cert.validExpiry * 1000 };
+}
+// Name for a pure DNS PTR query. dns.reverse() also reads the hosts file, which is exactly what a migration tester has filled with site names.
+function ptrName(ip) {
+  ip = String(ip || '').replace(/^\[|\]$/g, '').replace(/^::ffff:(?=\d+\.)/i, '');
+  if (isIP(ip) === 4) return `${ip.split('.').reverse().join('.')}.in-addr.arpa`;
+  if (isIP(ip) !== 6) return '';
+  const [head, tail = ''] = ip.split('%')[0].split('::'), left = head ? head.split(':') : [], right = tail ? tail.split(':') : [];
+  const groups = ip.includes('::') ? [...left, ...Array(8 - left.length - right.length).fill('0'), ...right] : left;
+  return `${groups.map(g => g.padStart(4, '0')).join('').split('').reverse().join('.')}.ip6.arpa`;
+}
+const daysLeft = (expires, now = Date.now()) => Math.floor((expires - now) / 86400000);
+module.exports = { ptrName, certSummary, daysLeft, ROUTE_BAR_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, validateRules, resolverRules, navigationURL, readSettings, saveSettings };
