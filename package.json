@@ -2,7 +2,7 @@
   "name": "migratiebrowser",
   "productName": "Dioptra",
   "desktopName": "migratiebrowser.desktop",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "A browser with per-domain IP overrides for migration testing",
   "author": {
     "name": "SolutionMAX",
@@ -63,7 +63,8 @@
         "zip"
       ],
       "hardenedRuntime": true,
-      "identity": "-"
+      "identity": "-",
+      "sign": "./scripts/sign-mac.cjs"
     },
     "publish": {
       "provider": "generic",

@@ -4,7 +4,8 @@ const { isIP } = require('node:net');
 const { domainToASCII } = require('node:url');
 
 const ROUTE_BAR_HEIGHT = 36;
-const DEFAULT_UPDATE_FEED = 'https://github.com/Solutionmax/dioptra/releases/latest/download/';
+// A build can carry its own feed in package.json ("updateFeed"), used for update test builds.
+const DEFAULT_UPDATE_FEED = (() => { try { return require('../package.json').updateFeed; } catch { return ''; } })() || 'https://github.com/Solutionmax/dioptra/releases/latest/download/';
 const RELEASE_PAGE = 'https://github.com/Solutionmax/dioptra/releases/latest';
 function validateRules(rules) {
   if (!Array.isArray(rules) || rules.length > 500) throw new Error('Up to 500 domain rules are allowed.');

@@ -301,7 +301,7 @@ function setIcon(node, name) { if (node.dataset.icon === name) return; node.data
 const HOW = {
   general: ['How updates work', ['Dioptra checks GitHub for a new release at start and every 4 hours.', 'You see it in the footer and at the top right. Nothing installs by itself.', 'You choose when. Tabs and domain rules come back after the restart.'], ''],
   manual: ['How to update on macOS', ['Open the download page and get the zip for your Mac: Apple Silicon or Intel.', 'Quit Dioptra and drag the new app over the old one in Applications.', 'Open it. Rules, tabs and logins are kept.'], 'The Mac build is not notarized yet, so it cannot replace itself.'],
-  auto: ['How to update', ['Click Download update. The file is checked against its checksum.', 'Click Install and restart when it suits you.', 'Dioptra reopens on the new version with your tabs.'], '']
+  auto: ['How to update', ['Click Download update. The file is checked against its checksum and, on macOS, its signature.', 'Click Install and restart when it suits you.', 'Dioptra reopens on the new version with your tabs.'], '']
 };
 let howKey = '';
 function renderUpdateDetails() {

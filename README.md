@@ -47,7 +47,7 @@ Get the files from the [latest release](../../releases/latest). Each release inc
 
 1. Unzip the file and move **Dioptra** to **Applications**.
 2. Open Dioptra. The app is not yet notarized by Apple, so the first time macOS says it cannot verify the app.
-3. Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to the Dioptra message. You only need to do this once per version.
+3. Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to the Dioptra message. You only need to do this when you install by hand; updates installed from inside Dioptra open without it.
 
 Prefer the terminal? This removes the download quarantine flag instead:
 
@@ -125,7 +125,7 @@ Compare shows you whether both sides *look* the same. Differences shows what the
 
 ### Updates
 
-The footer shows the installed version. Dioptra checks for new releases at startup and every four hours; nothing installs by itself. When an update is available, the footer and a notice at the top right tell you. Click either to open **Updates**: on Linux you can download and install the update there, on macOS **Open download page** takes you to the new release, where you download the zip and replace the app. You can turn automatic checks off in **Settings → Updates**.
+The footer shows the installed version. Dioptra checks for new releases at startup and every four hours; nothing installs by itself. When an update is available, the footer and a notice at the top right tell you. Click either to open **Updates**, choose **Download update** and then **Install and restart**. This works on Linux and, from 0.7.2, on macOS. Coming from 0.7.0 or 0.7.1 on macOS you update by hand one last time: download the zip from the release page and replace the app. You can turn automatic checks off in **Settings → Updates**.
 
 ![Updates panel with the installed version and how updates work](docs/screenshots/updates.png)
 

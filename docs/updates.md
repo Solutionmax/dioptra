@@ -14,7 +14,7 @@ Settings → Updates provides check, version/release notes, progress, download a
 4. Attach `SHA256SUMS.txt`.
 5. Test a real old-version → new-version installation on each target OS and verify profile preservation.
 
-The Mac preview is ad-hoc signed. macOS automatic installation requires suitable signing; the build machine currently has zero valid Developer ID identities. Until Developer ID signing and notarization are configured, macOS shows the update notice and an **Open download page** button instead of installing in place. Do not bypass signature verification.
+Since 0.7.2 the Mac builds are signed with SolutionMAX's own code signing certificate (not issued by Apple). Every build carries the same identity, so the in-app updater accepts the next version and macOS installs it. The builds are still not notarized: the first manual install needs **Open Anyway** once. Build with `DIOPTRA_SIGN_IDENTITY` (SHA-1 of the certificate) and optionally `DIOPTRA_SIGN_KEYCHAIN`; without them `scripts/sign-mac.cjs` signs ad hoc and such a build cannot update itself on macOS.
 
 Linux AppImage download and SHA512 verification have been exercised against a local HTTPS fixture. The tar.gz distribution is updated manually. The test advertises a synthetic future version carrying the current AppImage, verifying download transport/integrity, not an actual version upgrade or installation.
 

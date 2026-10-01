@@ -42,7 +42,8 @@ app.enableSandbox();
 const uiURL = pathToFileURL(path.join(__dirname, 'index.html')).href;
 let win, webSession, claudeAuthSession, activeId, panel = null, nextId = 1, quitting = false, authRequest = null;
 // macOS builds are ad-hoc signed: electron-updater cannot install them, so the notice links to the download page.
-const canInstall = process.platform !== 'darwin';
+// macOS can install updates itself since builds carry a fixed signing identity (scripts/sign-mac.cjs).
+const canInstall = true;
 const freshUpdate = message => ({ status: 'idle', message, canInstall, version: '' });
 let updateState = freshUpdate('Not checked yet.');
 const updateFeed = () => config.updateFeed || DEFAULT_UPDATE_FEED;
