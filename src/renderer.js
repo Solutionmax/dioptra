@@ -205,10 +205,15 @@ window.browser.onPerformance(renderPerformance);
 function renderWorkspace() {
   const tab=state.tabs.find(t=>t.id===state.activeId);
   const view=currentView(), usesRule=Boolean(tab?.route.configured && tab?.mode==='hostfile'), inPair=view!=='single';
+  const canCompare=tab?.mode==='hostfile' && /^https?:/.test(tab?.url || '');
+  const left=state.tabs.find(t=>t.id===state.comparison?.host), right=state.tabs.find(t=>t.id===state.comparison?.live);
+  // The right pane of Compare can be on another site; Differences only makes sense for one site on two servers.
+  const otherSite=Boolean(left && right && !right.startPage && left.route.host!==right.route.host);
+  if(!state.comparison) { compareWith=null; compareWithError=''; }
   for(const [id,name] of [['view-single','single'],['compare','compare'],['view-differences','differences']]) $(id).setAttribute('aria-pressed',String(view===name));
-  $('compare').disabled=!inPair && !usesRule; $('view-differences').disabled=!inPair && !usesRule;
-  const why=usesRule||inPair?'':' (add a domain rule for this site first)';
-  $('compare').title=(view==='compare'?'Close Live comparison':'Compare Hostfile and Live')+why; $('view-differences').title='Compare what both servers return'+why;
+  $('compare').disabled=!inPair && !canCompare; $('view-differences').disabled=view==='compare' ? otherSite || !left?.route.configured : !inPair && !usesRule;
+  const why=view==='compare' && otherSite?' (needs the same site on both sides)':$('view-differences').disabled?' (add a domain rule for this site first)':'';
+  $('compare').title=(view==='compare'?'Close comparison':usesRule?'Compare Hostfile and Live':'Compare with another URL')+(canCompare||inPair?'':' (open a website first)'); $('view-differences').title='Compare what both servers return'+why;
   const marked=state.library.bookmarks.some(b=>b.url===tab?.url);
   $('bookmark').classList.toggle('on',marked); $('bookmark').setAttribute('aria-label',marked?'Remove bookmark':'Bookmark page');
   $('bookmark').disabled=!/^https?:/.test(tab?.url || '');
@@ -218,18 +223,28 @@ function renderWorkspace() {
   $('find-bar').hidden=!state.find.open;
   $('find-count').textContent=state.find.text ? `${state.find.active} / ${state.find.matches}` : '';
   if(document.activeElement!==$('find-input')) $('find-input').value=state.find.text;
+  const oldField=$('compare-with'), caret=document.activeElement===oldField ? [oldField.selectionStart,oldField.selectionEnd] : null;
   $('pane-bars').replaceChildren(); $('comparison-errors').replaceChildren();
   renderRouteBar(tab, view);
   if(state.comparison) for(const pane of state.paneLayout) {
     const t=state.tabs.find(t=>t.id===pane.id);if(!t) continue;
     const selected=t.id===state.activeId;
-    const bar=routeBar(t,{pane:true,selected,peer:state.tabs.find(o=>o.id!==t.id&&[state.comparison?.host,state.comparison?.live].includes(o.id))});place(bar,pane.banner);bar.classList.toggle('compact',pane.banner.width<800);$('pane-bars').append(bar);
+    const isRight=t.id===state.comparison.live, peer=isRight?left:right;
+    const bar=isRight && (compareWith!==null || t.startPage) ? compareWithBar(t) : routeBar(t,{pane:true,selected,peer,other:isRight?otherSite:undefined});place(bar,pane.banner);bar.classList.toggle('compact',pane.banner.width<800);$('pane-bars').append(bar);
     if(t.error) {
       const error=el('div','comparison-error');place(error,pane.page);
       error.append(el('h2','',`${t.route.label} could not load`),el('p','',t.url),el('code','',t.error));
       const retry=el('button','','Try again');retry.onclick=async()=>{await command('activate',t.id);command('reload');};error.append(retry);$('comparison-errors').append(error);
+    } else if(isRight && t.startPage) {
+      const empty=el('div','pane-empty'), hint=el('span','','Type the address of the other copy, for example ');place(empty,pane.page);
+      hint.append(el('code','','staging.example.com'));empty.append(el('b','','What do you want to compare with?'),hint);$('comparison-errors').append(empty);
     }
   }
+  // The bars are rebuilt on every state update: keep the caret, and put it in the field when the field first shows.
+  const field=$('compare-with');
+  if(field && caret) { if(document.hasFocus()) { field.focus(); field.setSelectionRange(...caret); } } else if(field && !oldField) { field.focus(); field.select(); }
+  // Closing the field hands the focus back to the button that opened it.
+  if(compareWithClosed) { compareWithClosed=false; if(!field) document.querySelector('#pane-bars button.with')?.focus(); }
   renderDifferences(tab, view);
   renderLibrary();
 }
@@ -294,7 +309,8 @@ const ICONS = {
   alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
   info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
-  chevron: '<path d="m6 9 6 6 6-6"/>'
+  chevron: '<path d="m6 9 6 6 6-6"/>',
+  pen: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>'
 };
 function icon(name) { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.innerHTML = ICONS[name]; return svg; }
 function setIcon(node, name) { if (node.dataset.icon === name) return; node.dataset.icon = name; node.replaceChildren(icon(name)); }
@@ -358,12 +374,44 @@ function certButton(t) {
   button.dataset.card = 'cert'; button.dataset.tab = t.id;
   return button;
 }
-function routeBar(t, { pane = false, selected = false, peer = null } = {}) {
+// Compare with another URL: the draft address while the field in the right pane bar is open (null = closed).
+let compareWith = null, compareWithError = '', compareWithClosed = false;
+function closeCompareWith() { compareWith = null; compareWithError = ''; compareWithClosed = true; renderWorkspace(); }
+async function submitCompareWith(value) {
+  let result; try { result = await window.browser.command('compare-with', value); } catch (error) { result = { ok: false, error: error.message }; }
+  if (result.ok) return closeCompareWith();
+  compareWithError = result.error || 'That address could not be opened.';
+  renderWorkspace();
+}
+// The right pane bar as a form. An empty right pane has nothing to go back to, so there it cannot be closed.
+function compareWithBar(t) {
+  const bar = el('form', `route-bar editing${t.startPage ? '' : ' live'}`);
+  const label = el('label', '', 'Compare with'), input = el('input', ''), go = el('button', 'with-go', 'Go');
+  label.htmlFor = input.id = 'compare-with'; input.value = compareWith ?? ''; input.placeholder = 'https://'; input.spellcheck = false; input.autocomplete = 'off';
+  input.oninput = () => { compareWith = input.value; };
+  input.onkeydown = event => { if (event.key === 'Escape' && !t.startPage) closeCompareWith(); };
+  bar.onsubmit = event => { event.preventDefault(); submitCompareWith(input.value); };
+  if (!t.startPage) bar.append(el('span', 'badge', 'LIVE'));
+  bar.append(label, input);
+  if (compareWithError) { const error = el('span', 'with-error', compareWithError); error.id = 'compare-with-error'; error.setAttribute('role', 'alert'); input.setAttribute('aria-invalid', 'true'); input.setAttribute('aria-describedby', error.id); bar.append(error); }
+  bar.append(go);
+  if (!t.startPage) { const same = el('button', '', 'Same URL'); same.type = 'button'; same.title = 'Back to the same URL as the left pane'; same.onclick = () => submitCompareWith(null); const cancel = el('button', '', 'Cancel'); cancel.type = 'button'; cancel.onclick = closeCompareWith; bar.append(same, cancel); }
+  return bar;
+}
+function routeBar(t, { pane = false, selected = false, peer = null, other } = {}) {
   const label = t.route.label === 'HOSTFILE' ? 'Hostfile' : t.route.label === 'LIVE' ? 'Live' : t.route.label;
   const bar = el('div', `route-bar ${t.route.label.toLowerCase()}${selected ? ' active' : ''}`);
   const badge = pane ? el('button', 'badge', t.route.label) : el('span', 'badge', t.route.label);
   if (pane) { badge.setAttribute('aria-pressed', String(selected)); badge.setAttribute('aria-label', `${label} pane${t.route.host ? ` for ${t.route.host}` : ''}${selected ? ', selected' : ''}`); badge.onclick = () => command('activate', t.id); }
-  bar.append(badge, el('span', 'route-domain', t.route.host || 'New tab'));
+  if (other === undefined) bar.append(badge, el('span', 'route-domain', t.route.host || 'New tab'));
+  else {
+    // The address of the right pane in Compare opens the Compare with field. On pointerdown, as the bar can be rebuilt between press and release.
+    const swap = el('button', `with${other ? ' other' : ''}`), open = () => { compareWith = t.url; compareWithError = ''; renderWorkspace(); };
+    swap.type = 'button'; swap.title = 'Compare with another URL'; swap.setAttribute('aria-label', `Compare with another URL, now ${t.route.host}`);
+    swap.append(el('span', '', t.route.host || 'New tab'), icon('pen'));
+    swap.onpointerdown = event => { if (event.button === 0) { event.preventDefault(); open(); } }; swap.onclick = event => { if (event.detail === 0) open(); };
+    bar.append(badge, swap);
+  }
   if (t.route.dns) bar.append(dnsButton(t));
   if (t.route.configured) { const rule = kv('Rule', t.route.configured); rule.classList.add('rule'); bar.append(rule); }
   const ips = bareIP(t.connection?.ip), fromCache = t.connection?.fromCache;

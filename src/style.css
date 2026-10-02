@@ -57,7 +57,7 @@ button.badge{cursor:pointer}button.badge:hover{filter:brightness(.96)}
 #pane-bars .route-bar{position:absolute;z-index:3;border:1px solid var(--line);border-left:0;border-top:0}
 #pane-bars .route-bar.active{box-shadow:inset 0 -2px 0 var(--route-c)}
 #pane-bars .route-bar.hostfile{--route-c:var(--blue)}#pane-bars .route-bar.live{--route-c:var(--green)}
-#pane-bars .route-bar{overflow:hidden;white-space:nowrap}#pane-bars .route-domain,#pane-bars .kv.rule{display:none}#pane-bars .route-bar.compact{gap:9px;padding:0 9px 0 13px}.compact .kv .k,.compact .cert-text,.compact .kv.rule{display:none}
+#pane-bars .route-bar{overflow:hidden;white-space:nowrap}#pane-bars .kv.rule{display:none}#pane-bars .route-bar.compact{gap:9px;padding:0 9px 0 13px}.compact .kv .k,.compact .cert-text,.compact .kv.rule{display:none}
 #canvas{position:absolute;top:var(--top);bottom:30px;left:0;right:0;background:var(--bg);overflow:auto}
 body.panel-open #canvas{right:min(var(--panel),48vw)}
 .welcome{height:100%;display:flex;align-items:center;justify-content:center;flex-direction:column;text-align:center;padding:30px;background:radial-gradient(ellipse at 50% 20%,#fff 10%,var(--tint) 100%)}
@@ -249,3 +249,24 @@ html.tall{overflow-y:auto;scrollbar-width:thin}
 .none{font-family:var(--sans);color:var(--ink3)}
 .cmp td small{display:block;font-family:var(--sans);font-size:11.5px;color:var(--ink3);line-break:auto}
 .cmp tr.g td{padding:12px 0 0;border-bottom:0}.cmp tr.g .dns-name{margin:0}
+/* Compare with another URL: the domain in a pane bar keeps its width, the connected IP gives way first */
+#pane-bars .route-domain,#pane-bars .with{flex:0 0 auto;max-width:48%}
+#pane-bars .kv.conn{flex:0 100 auto}#pane-bars .kv.conn .v{overflow:hidden;text-overflow:ellipsis}
+button.with{display:inline-flex;align-items:center;gap:6px;min-width:0;font-size:inherit;font-weight:700;color:var(--ink);background:none;border:1px solid transparent;border-radius:7px;padding:3px 7px;margin:0 -4px;cursor:pointer;transition:background .15s,border-color .15s}
+button.with span{overflow:hidden;text-overflow:ellipsis}
+button.with svg{width:12px;height:12px;flex:none;color:var(--ink3)}
+button.with:hover{background:var(--tint);border-color:var(--line)}
+button.with.other{background:var(--green-soft);color:var(--green-ink)}button.with.other svg{color:var(--green-ink)}
+#pane-bars .route-bar.editing{gap:8px}
+.editing label{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);flex:none}
+.editing input{flex:1 1 0;width:0;min-width:60px;height:26px;font:500 12px var(--mono);color:var(--ink);background:var(--card);border:1px solid var(--blue);border-radius:7px;padding:0 9px;box-shadow:0 0 0 3px var(--blue-soft);outline:0}
+.editing input[aria-invalid=true]{border-color:var(--red);box-shadow:0 0 0 3px var(--red-soft)}
+.editing input::placeholder{color:#98a2b3}
+.editing button{flex:none;height:26px;border-radius:7px;padding:0 11px;font-size:11.5px;font-weight:600;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--ink)}
+.editing button:hover{background:var(--tint)}
+.editing button.with-go{background:var(--ink);border-color:var(--ink);color:#fff}.editing button.with-go:hover{background:#1d2939}
+.with-error{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:11.5px;color:var(--red-ink);background:var(--red-soft);border-radius:6px;padding:3px 8px}
+.comparison-error,.pane-empty{z-index:2}
+.pane-empty{position:absolute;display:grid;place-content:center;justify-items:center;gap:6px;text-align:center;color:var(--ink2);padding:24px;background:var(--bg)}
+.pane-empty b{font-size:15px;color:var(--ink)}
+.pane-empty code{font-family:var(--mono);font-size:11.5px;background:var(--tint);border-radius:5px;padding:1px 6px}

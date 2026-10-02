@@ -385,7 +385,7 @@ function ensureLive() {
   return livePromise;
 }
 function stopCompare() { const pair=comparison; comparison=null; if(pair) {activate(pair.host);closeTab(pair.live);} layout(); }
-// The tab that Compare and Differences work on: a Hostfile tab on a domain with an active rule.
+// The tab that Differences works on: a Hostfile tab on a domain with an active rule.
 function ruledTab(what) {
   const tab=visibleComparison() ? tabs.get(comparison.host) : current();
   if (!tab || tab.mode !== 'hostfile' || !/^https?:/.test(tab.url)) throw new Error(`Open a website in a Hostfile tab to ${what} it.`);
@@ -438,18 +438,20 @@ async function compare() {
   comparing=true;
   try {
   const tab=current();
-  if (!tab || tab.mode !== 'hostfile' || !/^https?:/.test(tab.url)) throw new Error('Open a website in a Hostfile tab to compare it.');
-  if (!activeRules.some(r=>r.enabled && r.domain===new URL(tab.url).hostname)) throw new Error('Add and apply a domain rule for this website first.');
+  if (!tab || tab.mode !== 'hostfile' || !/^https?:/.test(tab.url)) throw new Error('Open a website to compare it.');
+  // Without a rule both panes would show the same server, so the right pane starts empty and asks for another address.
+  const ruled=activeRules.some(r=>r.enabled && r.domain===new URL(tab.url).hostname);
   if (tabs.size>=50) throw new Error('Close a tab before comparing.');
   if (comparison && tabs.has(comparison.live)) closeTab(comparison.live);
   await ensureLive();
   if(tabs.get(tab.id)!==tab || current()!==tab) return;
   closeFind(); viewMode='single';
   tab.toolsOpen=false;
-  const live=newTab(tab.url,false,'live');
+  const live=newTab(ruled ? tab.url : 'about:blank',false,'live');
   // A comparison opened during a Claude conversation stays in its anchor group.
   live.claudeGroup=tab.claudeGroup;
   comparison={host:tab.id,live:live.id}; activeId=tab.id; panel=null; layout();emit();
+  if (!ruled) win.webContents.focus();
   } finally { comparing=false; }
 }
 // What the page gives away about its platform; read in an isolated world so the page cannot see or change the probe.
@@ -546,6 +548,16 @@ ipcMain.handle('browser', async (event, action, data) => {
       case 'state': return { ok: true, state: state() };
       case 'compare': await compare(); break;
       case 'stop-compare': stopCompare(); break;
+      case 'compare-with': {
+        // Another address for the right pane of Compare; null puts it back on the page of the left pane.
+        const pair = visibleComparison(), left = pair && tabs.get(pair.host), right = pair && tabs.get(pair.live);
+        if (!left || !right) throw new Error('Open Compare first.');
+        const url = data === null ? left.url : navigationURL(data);
+        if (!/^https?:/.test(url)) throw new Error('Enter a web address.');
+        right.url = url; right.startPage = false; right.error = ''; layout();
+        right.view.webContents.loadURL(url).catch(error => { if (error.code !== 'ERR_ABORTED') failure(right, error.message); });
+        break;
+      }
       case 'view': await setView(data); break;
       case 'differences-run': return { ok: true, report: await runDifferences() };
       case 'differences-ask-claude': {
