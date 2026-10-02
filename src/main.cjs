@@ -12,6 +12,7 @@ const { installClaude, directoryName } = require('./claude-install.cjs');
 const { pathToFileURL } = require('node:url');
 const { ptrName, certSummary, daysLeft, ROUTE_BAR_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, validateRules, resolverRules, navigationURL, readSettings, saveSettings } = require('./core.cjs');
 const { fetchDocument, buildReport, summaryText } = require('./differences.cjs');
+const { dnsReport, canLookup } = require('./dns-records.cjs');
 
 // Keep the original profile through the Hostlane and Dioptra renames.
 app.setPath('userData', path.join(app.getPath('appData'), 'Migratiebrowser'));
@@ -88,7 +89,7 @@ function reverseName(ip) {
   if (!reverseNames.has(name)) reverseNames.set(name, dns.resolvePtr(name).then(names => String(names[0] || '').replace(/\.$/, '').slice(0, 253), () => ''));
   return reverseNames.get(name);
 }
-// Small cards (certificate, site platform, memory). The website is a native view on top of the window UI, so a card
+// Small cards (certificate, site platform, memory, DNS records). The website is a native view on top of the window UI, so a card
 // is a small native view of its own. Opening and closing never depend on focus events: those differ per platform.
 // The button toggles, a click anywhere else or Escape closes.
 let card = null;
@@ -107,29 +108,65 @@ function memoryData() {
   const claudeKB = kb.has(claudePid) && !groups.has(claudePid) ? kb.get(claudePid) : 0, total = [...kb.values()].reduce((sum, n) => sum + n, 0);
   return { total, rows, claude: claudeKB, rest: Math.max(0, total - claudeKB - rows.reduce((sum, r) => sum + r.kb, 0)), tabs: tabs.size, processes: kb.size };
 }
+// What the DNS card looks up for a tab. With an active rule the card compares, but only where both sides are on
+// screen (Compare, Differences); in a single Hostfile tab the rule is just mentioned next to the public address.
+function dnsTarget(tab) {
+  const host = route(tab).host;
+  if (tab.mode === 'auth' || !canLookup(host)) return null;
+  const rule = activeRules.find(r => r.enabled && r.domain === host), pair = visibleComparison();
+  const paired = pair ? [pair.host, pair.live].includes(tab.id) : viewMode === 'differences' && tab.id === activeId;
+  return { host, ruleIP: rule && (paired || tab.mode === 'hostfile') ? rule.ip : '', compare: Boolean(rule && paired) };
+}
 function cardData(kind, id) {
   if (kind === 'memory') return memoryData();
   const tab = tabs.get(id); if (!tab) return null;
+  if (kind === 'dns') return dnsTarget(tab);
   if (kind === 'site') return tab.site || null;
   const cert = kind === 'cert' && route(tab).cert && certificates.get(certKey(tab.mode, route(tab).host));
   return cert ? { ...cert, daysLeft: daysLeft(cert.expires) } : null;
 }
+const CARD_WIDTH = { cert: 330, dns: 440 }, DNS_TABLE_WIDTH = 780;
+// Returns true when the card had to be cut off at the bottom of the window (only the DNS card can get that long).
 function placeCard(height) {
-  const [width, full] = win.getContentSize(), w = Math.min(card.kind === 'cert' ? 330 : 340, width - 16), anchor = card.anchor;
-  card.view.setBounds({ x: Math.max(8, Math.min(Math.round(Number(anchor?.right) || width) - w + 7, width - w - 8)), y: card.kind === 'memory' ? Math.max(8, full - 30 - 8 - height) : 132 + 5, width: w, height });
+  if (!win || win.isDestroyed()) return false;
+  const [width, full] = win.getContentSize(), w = Math.min(card.wide ? DNS_TABLE_WIDTH : CARD_WIDTH[card.kind] || 340, width - 16), anchor = card.anchor;
+  const shown = card.kind === 'dns' ? Math.min(height, Math.max(120, full - 132 - 5 - 30 - 8)) : height;
+  card.height = height;
+  card.view.setBounds({ x: Math.max(8, Math.min(Math.round(Number(anchor?.right) || width) - w + 7, width - w - 8)), y: card.kind === 'memory' ? Math.max(8, full - 30 - 8 - height) : 132 + 5, width: w, height: shown });
+  return shown < height;
 }
 const renderCard = data => card.view.webContents.executeJavaScript(`render(${JSON.stringify({ kind: card.kind, ...data })})`).then(Math.ceil);
+// The DNS card opens at once with a spinner and fills in when the answers are there. Nothing is looked up before
+// the click; Refresh asks again. The card can be closed or replaced, the window closed or Refresh clicked again
+// while a lookup runs: only the latest run of the card that is still open may draw.
+async function showDns(mine) {
+  const run = mine.run = (mine.run || 0) + 1, current = () => card === mine && mine.run === run && win && !win.isDestroyed();
+  const draw = async data => {
+    if (!current()) return;
+    const height = await renderCard(data);
+    if (current() && placeCard(height)) await mine.view.webContents.executeJavaScript("document.documentElement.classList.add('tall')");
+  };
+  try {
+    mine.wide = false; await draw({ state: 'loading', host: mine.dns.host });
+    const report = await dnsReport(mine.dns);
+    if (!current()) return;
+    // Width first, so the text wraps as it will be shown.
+    mine.wide = Boolean(report.table); placeCard(mine.height || 1);
+    await draw({ state: 'done', ...report });
+  } catch (error) { if (current()) throw error; }
+}
 async function openCard(kind, id, anchor) {
   if (card) { const same = card.kind === kind && card.id === id; closeCard(); if (same) return; }
-  if (!['cert', 'site', 'memory'].includes(kind)) return;
+  if (!['cert', 'site', 'memory', 'dns'].includes(kind)) return;
   const data = cardData(kind, id); if (!data) return;
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
   const wc = view.webContents, mine = card = { view, kind, id, anchor };
   wc.setWindowOpenHandler(() => ({ action: 'deny' }));
-  // The card has no bridge to the app. Its two actions are links to a reserved, never loaded address that is handled here.
+  // The card has no bridge to the app. Its actions are links to a reserved, never loaded address that is handled here.
   wc.on('will-navigate', (event, url) => {
     event.preventDefault();
-    const [, action, target] = url.match(/^https:\/\/card\.invalid\/(activate|reload)\/(\d+)$/) || [];
+    const [, action, target] = url.match(/^https:\/\/card\.invalid\/(activate|reload|refresh)\/(\d+)$/) || [];
+    if (action === 'refresh') { if (card === mine && kind === 'dns') showDns(mine).catch(error => console.error('DNS card:', error.message)); return; }
     const tab = tabs.get(Number(target)); if (!tab || card !== mine || kind !== 'memory') return;
     closeCard(); activate(tab.id); if (action === 'reload') { tab.error = ''; tab.view.webContents.reload(); }
   });
@@ -138,6 +175,7 @@ async function openCard(kind, id, anchor) {
   if (card !== mine) return;
   // Width first, so the text wraps as it will be shown; then the height the content needs.
   view.setBorderRadius(10); placeCard(1); win.contentView.addChildView(view);
+  if (kind === 'dns') { mine.dns = data; return showDns(mine); }
   const height = await renderCard(data);
   if (card === mine) placeCard(height);
 }
@@ -145,7 +183,7 @@ function route(tab) {
   let host = ''; try { host = new URL(tab.url).hostname; } catch {}
   const rule = tab.mode === 'hostfile' && activeRules.find(r => r.enabled && r.domain === host);
   const ssl = !tab.url.startsWith('https:') ? 'HTTP · no TLS' : activeSSL || protectedHost(host) || tab.mode === 'auth' ? 'SSL checks on' : 'SSL checks off';
-  return { label: rule ? 'HOSTFILE' : 'LIVE', configured: rule?.ip || '', host, ssl, cert: ssl === 'SSL checks on' && tab.mode !== 'auth' && certificates.has(certKey(tab.mode, host)) };
+  return { label: rule ? 'HOSTFILE' : 'LIVE', configured: rule?.ip || '', host, ssl, dns: tab.mode !== 'auth' && canLookup(host), cert: ssl === 'SSL checks on' && tab.mode !== 'auth' && certificates.has(certKey(tab.mode, host)) };
 }
 const tabs = new Map();
 const current = () => tabs.get(activeId);

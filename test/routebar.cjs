@@ -1,5 +1,5 @@
 // Route bar and footer extras against a real site: reverse DNS name, certificate card, site platform card,
-// memory card, version in the footer and Clear cache reload.
+// DNS records card, memory card, version in the footer and Clear cache reload.
 // Needs internet (valid public certificate, PTR record, a WordPress site). Run: xvfb-run -a npm run test:routebar
 // With xdotool under a window manager (Linux) the clicks are real mouse clicks.
 const { _electron: electron } = require('playwright');
@@ -64,7 +64,26 @@ const { execFileSync } = require('node:child_process');
     await click(cert); await cardText('days left'); assert.equal(await views(), before + 1, 'one card at a time');
     await click(cert); await sleep(500);
 
-    // 4. Memory card: opens upward from the footer, lists the tab, a row jumps to its tab.
+    // 4. DNS card: public records of the visited name, Refresh asks again, and the side by side comparison renders.
+    const dnsButton = bar.locator('button.dns-btn'); await dnsButton.waitFor();
+    await click(dnsButton);
+    const dnsText = await cardText('asked');
+    assert.match(dnsText, /DNS records/); assert.match(dnsText, /\bA \d+\.\d+\.\d+\.\d+ ?TTL \d/, 'address with its lifetime'); assert.match(dnsText, /\bNS [a-z0-9.-]+\.[a-z]+/i, 'nameservers');
+    assert.match(dnsText, /System resolver · asked \d\d:\d\d/);
+    b = await topBounds();
+    assert.ok(b.y >= 132 && b.width === 440 && b.height > 150, `DNS card below the bar: ${JSON.stringify(b)}`);
+    screen('dns.png');
+    await (await cardPage()).locator('a.mem-btn').click({ noWaitAfter: true }); await sleep(300);
+    assert.match(await cardText('asked'), /DNS records/); assert.equal(await views(), before + 1, 'Refresh keeps the card open');
+    const row = (type, status, hostfile, live) => ({ type, status, hostfile, live });
+    const compared = await (await cardPage()).evaluate(async data => { await render(data); return { text: document.body.innerText.replace(/\s+/g, ' '), marked: document.querySelectorAll('mark').length }; }, { kind: 'dns', state: 'done', host: 'example.test', ruleIP: '203.0.113.10', askedAt: Date.now(), status: 'ok', code: '', server: 'ok', groups: [], table: { differing: 1, groups: [
+      { name: 'example.test', role: 'host', rows: [row('A', 'expected', [{ text: '203.0.113.10', differs: false }], [{ text: '198.51.100.24', differs: false }]), row('MX', 'differs', [], [{ text: 'mail.example.test', prio: 10, differs: true }]), { ...row('TXT', 'unknown', [], [{ text: 'v=spf1 -all', differs: false }]), failed: { hostfile: 'ETIMEOUT', live: '' } }] },
+      { name: 'www.example.test', role: 'www', rows: [row('CNAME', 'same', [{ text: 'example.test', differs: false }], [{ text: 'example.test', differs: false }])] }] } });
+    for (const part of [/HOSTFILE ?asked 203\.0\.113\.10 itself/, /LIVE ?public DNS/, /1 record type differs/, /203\.0\.113\.10 your rule 198\.51\.100\.24 current server Expected/, /MX no record 10 ?mail\.example\.test Differs/, /TXT lookup failed \(ETIMEOUT\) v=spf1 -all Unknown/, /www\.example\.test CNAME example\.test example\.test Same/]) assert.match(compared.text, part);
+    assert.equal(compared.marked, 1, 'only the value that exists on one side is marked');
+    await click(dnsButton); await sleep(500); assert.equal(await views(), before, 'the DNS button toggles');
+
+    // 5. Memory card: opens upward from the footer, lists the tab, a row jumps to its tab.
     const ram = ui.locator('#memory-usage');
     assert.match(await ram.innerText(), /^RAM [\d.]+ [MG]B$/);
     await click(ram);
@@ -76,7 +95,7 @@ const { execFileSync } = require('node:child_process');
     await (await cardPage()).locator('a.mem-row').first().click(); await sleep(600);
     assert.equal(await views(), before, 'a tab row closes the card and jumps to the tab');
 
-    // 5. Version in the footer opens the Updates panel with the explanation.
+    // 6. Version in the footer opens the Updates panel with the explanation.
     const version = ui.locator('#footer-version');
     assert.match(await version.innerText(), /^Dioptra v\d+\.\d+\.\d+$/);
     await click(version); await ui.locator('#update-section').waitFor();
@@ -85,15 +104,15 @@ const { execFileSync } = require('node:child_process');
     screen('updates.png');
     await ui.locator('#close-panel').click().catch(() => ui.evaluate(() => window.browser.command('panel', null)));
 
-    // 6. Clear cache also reloads the page.
+    // 7. Clear cache also reloads the page.
     await app.evaluate(({ webContents }, origin) => { globalThis.__loads = 0; for (const wc of webContents.getAllWebContents()) if (wc.getURL().startsWith(origin)) wc.on('did-finish-load', () => globalThis.__loads++); }, new URL(site).origin);
     await ui.locator('#clear-cache').click();
     const until = Date.now() + 20000; while (!(await app.evaluate(() => globalThis.__loads)) && Date.now() < until) await sleep(100);
     assert.equal(await app.evaluate(() => globalThis.__loads), 1, 'page reloaded once after Clear cache');
     await bar.locator('.ptr').waitFor(); await chip.waitFor();
     if (shots) await ui.screenshot({ path: path.join(shots, 'bar.png') });
-    console.log('PASS: reverse DNS name, certificate card, site platform card, memory card, footer version and Updates panel, Clear cache reload.');
-    console.log(' cert:', certText); console.log(' site:', siteText); console.log(' memory:', memText);
+    console.log('PASS: reverse DNS name, certificate card, site platform card, DNS card, memory card, footer version and Updates panel, Clear cache reload.');
+    console.log(' cert:', certText); console.log(' site:', siteText); console.log(' dns:', dnsText); console.log(' memory:', memText);
   } finally {
     const exited = new Promise(r => app.process().exitCode !== null ? r() : app.process().once('exit', r));
     await app.evaluate(({ app }) => app.quit()).catch(() => {});

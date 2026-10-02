@@ -25,6 +25,7 @@ Moving a website to a new server usually means editing `/etc/hosts`, flushing DN
 
 - **Domain rules, only in this browser.** Point `example.com` to your new server's IP. Your system hosts file, other browsers and colleagues are not affected.
 - **Always know where you are.** The route bar shows the rule, the IP you are really connected to with its reverse DNS name, the certificate state and the HTTP status.
+- **DNS records at a click.** The A, AAAA, CNAME, MX, TXT and NS records of the domain. In Compare the zone on the new server sits next to public DNS, so a mail or TXT record that did not come along shows up before you switch.
 - **See what the site runs on.** WordPress, WooCommerce, Drupal, Laravel and more, with the PHP version when the server reports it. In Compare a different PHP version on the old and new server is marked.
 - **Compare.** The new server and the live site side by side, each with its own cookies.
 - **Differences.** Dioptra fetches the page from both servers and shows what changed in the HTML, the headers and the external domains the page loads. Injected scripts and other signs of a hacked site stand out immediately.
@@ -78,15 +79,18 @@ Type the normal address. The blue **HOSTFILE** badge in the route bar means the 
 
 ![Single view with the route bar showing Hostfile, rule IP, connected IP and certificate state](docs/screenshots/single.png)
 
-Three things in the window open a small card with details:
+Four things in the window open a small card with details:
 
 - **Certificate valid** (with SSL verification on): who the certificate was issued to, the issuer and the expiry date with the days left.
 - **Site**: the platform Dioptra recognised, shop, theme, plugins that are visible in the page, PHP version and web server. This is read from what the page itself gives away (generator tag, file paths, cookie names, headers). When nothing is recognised, nothing is shown.
+- **DNS** (next to the domain name): the A, AAAA, CNAME, MX, TXT and NS records that public DNS gives for the name you are visiting, plus its `www` name. Nothing is looked up until you click, and **Refresh** asks again.
 - **RAM** in the footer: memory per tab, so you can see which site is heavy. Click a tab to jump to it.
 
 ![Certificate card with issuer and expiry date](docs/screenshots/certificate.png)
 
 ![Site card showing WordPress, WooCommerce, theme, plugins, PHP version and web server](docs/screenshots/site.png)
+
+![DNS card with the public records of the domain](docs/screenshots/dns.png)
 
 ![Memory card listing memory per tab](docs/screenshots/memory.png)
 
@@ -95,6 +99,10 @@ Three things in the window open a small card with details:
 Click **Compare**. The left pane is the new server through your rule, the right pane is the live site through normal DNS. Each pane has its own route bar and its own temporary cookies. Click a pane to use the address bar, back, forward and find in that pane.
 
 ![Compare view with Hostfile on the left and Live on the right](docs/screenshots/compare.png)
+
+The **DNS** button in either pane puts the DNS records side by side: what the new server answers when Dioptra asks it directly, and what public DNS says. Values that exist on one side only are marked, so a mail or verification record that is missing on the new server stands out. The address record is expected to differ during a migration and is labelled that way. This works when the new server runs its own DNS, as cPanel, DirectAdmin and Plesk servers do. When it does not, the card says so and shows public DNS.
+
+![DNS records of the new server next to public DNS](docs/screenshots/dns-compare.png)
 
 ### 4. See the differences
 
@@ -137,6 +145,7 @@ Click the Claude icon, choose **Install Claude**, and sign in with your Claude a
 
 - Dioptra never edits your system hosts file or proxy settings.
 - The Live side of a comparison uses a separate, temporary session that is removed when you close the app.
+- DNS records are looked up only when you click the DNS button. In Compare the server from your rule is asked directly on port 53.
 - Differences requests are sent without your cookies. Reports never include cookies or authorization headers.
 - Websites run in Chromium's sandbox with context isolation. Claude, Anthropic and common sign-in providers always keep certificate verification.
 

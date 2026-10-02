@@ -342,6 +342,14 @@ function siteChip(t, peer) {
   button.setAttribute('aria-label', `Site runs on ${value.textContent}, show details`);
   return button;
 }
+// Opens the DNS card. Nothing is looked up until it is clicked.
+function dnsButton(t) {
+  const button = el('button', 'dns-btn', 'DNS'); button.type = 'button';
+  const chevron = icon('chevron'); chevron.classList.add('chev'); button.append(chevron);
+  button.title = `DNS records of ${t.route.host}`; button.setAttribute('aria-label', `Show DNS records of ${t.route.host}`); button.setAttribute('aria-haspopup', 'dialog');
+  button.dataset.card = 'dns'; button.dataset.tab = t.id;
+  return button;
+}
 function certButton(t) {
   const button = el('button', 'ok cert-btn'); button.type = 'button';
   const chevron = icon('chevron'); chevron.classList.add('chev');
@@ -356,6 +364,7 @@ function routeBar(t, { pane = false, selected = false, peer = null } = {}) {
   const badge = pane ? el('button', 'badge', t.route.label) : el('span', 'badge', t.route.label);
   if (pane) { badge.setAttribute('aria-pressed', String(selected)); badge.setAttribute('aria-label', `${label} pane${t.route.host ? ` for ${t.route.host}` : ''}${selected ? ', selected' : ''}`); badge.onclick = () => command('activate', t.id); }
   bar.append(badge, el('span', 'route-domain', t.route.host || 'New tab'));
+  if (t.route.dns) bar.append(dnsButton(t));
   if (t.route.configured) { const rule = kv('Rule', t.route.configured); rule.classList.add('rule'); bar.append(rule); }
   const ips = bareIP(t.connection?.ip), fromCache = t.connection?.fromCache;
   const measured = t.loading ? 'Connecting…' : t.error ? 'Not connected' : fromCache ? 'Cached · IP not measured' : ips ? ips : 'IP not available';

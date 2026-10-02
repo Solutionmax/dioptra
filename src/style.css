@@ -152,7 +152,7 @@ tr.flag td{background:var(--red-soft)}.y{color:var(--green-ink);font-weight:800}
 
 .diff-side .finding,.diff-side .finding b{overflow-wrap:anywhere}.diff-side{min-width:0;overflow-x:hidden}
 
-.kv.conn{flex:0 1 auto;min-width:0}
+.kv.conn{flex:0 1 auto;min-width:0;overflow:hidden}
 .ptr{font-family:var(--mono);font-size:12px;color:var(--ink3);overflow:hidden;text-overflow:ellipsis;min-width:0}
 .ptr:before{content:"·";margin-right:6px;color:#b6c0ce}
 button.cert-btn{border:0;background:none;font-size:inherit;color:var(--green-ink);padding:3px 7px;margin:0 -7px;border-radius:6px}
@@ -211,3 +211,41 @@ a.mem-row:focus-visible,.mem-btn:focus-visible{outline:2px solid var(--blue);out
 .how li{counter-increment:step;display:grid;grid-template-columns:20px 1fr;gap:8px;color:var(--ink2);font-size:12px;line-height:1.45}
 .how li:before{content:counter(step);font-family:var(--mono);font-size:10.5px;font-weight:600;width:20px;height:20px;border-radius:6px;background:var(--tint);color:var(--ink2);display:grid;place-items:center}
 .compact .site-btn .k{display:none}
+/* DNS button in the route bar and the DNS card */
+button.dns-btn{display:inline-flex;align-items:center;gap:4px;flex:none;font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.12em;color:var(--ink2);border-radius:6px;padding:2px 5px 2px 8px}
+button.dns-btn:hover{color:var(--ink)}
+.dns-btn .chev{width:11px;height:11px}
+html.tall{overflow-y:auto;scrollbar-width:thin}
+.card-head.dns-head{justify-content:flex-start;gap:10px;margin-bottom:11px}.dns-head .card-sub:last-child,.dns-head .push{margin-left:auto}
+.pill.amber{background:#fde7bf;color:var(--amber-ink)}.pill.green{background:var(--green-soft);color:var(--green-ink)}
+.dns-busy{display:flex;align-items:center;gap:10px;color:var(--ink2);padding:6px 0 4px}.dns-busy .spinner{width:16px;height:16px;margin:0;flex:none}
+.notice{background:var(--tint);border-radius:9px;padding:10px 12px;color:var(--ink2);line-height:1.5;margin-bottom:11px;overflow-wrap:anywhere}
+.notice b{font-family:var(--mono);font-weight:600;color:var(--ink)}.notice.red{background:var(--red-soft);color:var(--red-ink)}.notice.red b{color:inherit}
+.dns-none{margin:0;color:var(--ink2)}
+.dns-name{font-family:var(--mono);font-size:12px;font-weight:600;margin:0 0 9px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;overflow-wrap:anywhere}
+.dns-name small{font-family:var(--sans);font-weight:400;font-size:11.5px;color:var(--ink3)}
+.dns-group{border-top:1px solid var(--line);margin-top:11px;padding-top:11px}
+.card-pop dl.recs{grid-template-columns:50px 1fr;gap:9px 10px}
+.recs dt{padding-top:3px}
+.recs dd{font-family:var(--mono);font-size:12px;display:grid;gap:4px;line-break:anywhere}
+.card-pop .recs dd small{font-family:var(--sans);line-break:auto}.recs dd small b{font-family:var(--mono);font-weight:600;color:var(--blue-ink)}
+.prio{color:var(--ink3);margin-right:8px;font-style:normal}mark .prio{color:inherit;opacity:.7}
+.ttl{font-style:normal;font-size:10.5px;color:var(--ink3);background:var(--tint);border-radius:5px;padding:1px 6px;margin-left:6px;white-space:nowrap}
+.dns-foot{border-top:1px solid var(--line);padding-top:11px;margin-top:12px}
+/* Hostfile and Live side by side, one row per record type */
+.cmp{table-layout:fixed;font-size:12px}
+.cmp col.ct{width:58px}.cmp col.cs{width:88px}
+.cmp th{font-family:var(--sans);font-size:12px;letter-spacing:0;text-transform:none;padding:7px 12px 9px;vertical-align:bottom;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmp th .badge{display:inline-block;padding:2px 8px;margin-right:8px}
+.cmp th small{font-size:11.5px;color:var(--ink3)}.cmp th small b{font-family:var(--mono);font-weight:500;color:var(--ink)}
+.cmp th.hostfile{background:linear-gradient(var(--blue-soft),var(--blue-soft)) bottom/100% 2px no-repeat}
+.cmp th.live{background:linear-gradient(var(--green-soft),var(--green-soft)) bottom/100% 2px no-repeat}
+.cmp td{padding:9px 12px;font-family:var(--mono);line-break:anywhere;vertical-align:top;line-height:1.5}
+.cmp td.t{font-size:9.5px;letter-spacing:.14em;color:var(--ink3);padding:12px 0 0 2px;white-space:nowrap}
+.cmp .live{border-left:1px solid var(--line)}
+.cmp td.p{text-align:right;padding-right:0;font-family:var(--sans);white-space:nowrap}
+.cmp .v+.v{margin-top:4px}
+.cmp mark{background:var(--amber-soft);color:var(--amber-ink);border-radius:5px;padding:1px 5px;margin:0 -5px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.none{font-family:var(--sans);color:var(--ink3)}
+.cmp td small{display:block;font-family:var(--sans);font-size:11.5px;color:var(--ink3);line-break:auto}
+.cmp tr.g td{padding:12px 0 0;border-bottom:0}.cmp tr.g .dns-name{margin:0}
