@@ -97,9 +97,9 @@ const { execFileSync } = require('node:child_process');
 
     // 6. Version in the footer opens the Updates panel with the explanation.
     const version = ui.locator('#footer-version');
-    assert.match(await version.innerText(), /^Dioptra v\d+\.\d+\.\d+$/);
+    assert.match(await version.innerText(), /^Dioptra v\d+\.\d+\.\d+(-[\w.]+)?$/);
     await click(version); await ui.locator('#update-section').waitFor();
-    assert.match(await ui.locator('#update-version').innerText(), /^Dioptra v\d+\.\d+\.\d+$/);
+    assert.match(await ui.locator('#update-version').innerText(), /^Dioptra v\d+\.\d+\.\d+(-[\w.]+)?$/);
     assert.equal(await ui.locator('#how-steps li').count(), 3, 'three steps explain how updates work');
     screen('updates.png');
     await ui.locator('#close-panel').click().catch(() => ui.evaluate(() => window.browser.command('panel', null)));

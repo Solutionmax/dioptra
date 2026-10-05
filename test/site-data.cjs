@@ -40,7 +40,7 @@ const http = require('node:http');
     assert.equal(s.paneLayout.length, 1);
     assert.equal(s.paneLayout[0].banner.y + s.paneLayout[0].banner.height, s.paneLayout[0].page.y, 'single bar sits directly above the page');
     assert.equal((await cmd('compare')).ok, true);
-    await poll(s => s.view === 'compare' && s.paneLayout.length === 2, 'compare');
+    await poll(s => s.view === 'compare' && s.paneLayout.length === 2 && s.tabs.every(t => t.connection), 'compare');
     s = await st();
     for (const pane of s.paneLayout) { assert.equal(pane.banner.y + pane.banner.height, pane.page.y); assert.equal(pane.banner.height, 36); assert.equal(pane.banner.width, pane.page.width); }
     assert.equal(s.routeBarHeight, 0, 'no header strip in compare'); assert.equal(s.paneLayout[0].page.y, 132);

@@ -38,6 +38,7 @@ Moving a website to a new server usually means editing `/etc/hosts`, flushing DN
 | --- | --- |
 | macOS, Apple silicon (M1 and later) | `Dioptra-<version>-mac-arm64.zip` |
 | macOS, Intel | `Dioptra-<version>-mac-x64.zip` |
+| Windows 11 and 10, 64 bit | `Dioptra-<version>-win-x64.exe` |
 | Linux x86-64 | `Dioptra-<version>-linux-x86_64.AppImage` |
 
 Get the files from the [latest release](../../releases/latest). Each release includes a `SHA256SUMS.txt` file.
@@ -55,6 +56,14 @@ Prefer the terminal? This removes the download quarantine flag instead:
 ```sh
 xattr -dr com.apple.quarantine /Applications/Dioptra.app
 ```
+
+### Windows
+
+1. Run `Dioptra-<version>-win-x64.exe`.
+2. The installer is not signed yet, so Windows shows **Windows protected your PC**. Click **More info** and then **Run anyway**.
+3. Dioptra installs for your user only, without administrator rights, and starts when it is ready. You find it in the Start menu and on the desktop.
+
+Updates installed from inside Dioptra do not show the warning again. Tested on Windows 11.
 
 ### Linux
 
@@ -137,7 +146,7 @@ Compare shows you whether both sides *look* the same. Differences shows what the
 
 ### Updates
 
-The footer shows the installed version. Dioptra checks for new releases at startup and every four hours; nothing installs by itself. When an update is available, the footer and a notice at the top right tell you. Click either to open **Updates**, choose **Download update** and then **Install and restart**. This works on Linux and, from 0.7.2, on macOS. Coming from 0.7.0 or 0.7.1 on macOS you update by hand one last time: download the zip from the release page and replace the app. You can turn automatic checks off in **Settings → Updates**.
+The footer shows the installed version. Dioptra checks for new releases at startup and every four hours; nothing installs by itself. When an update is available, the footer and a notice at the top right tell you. Click either to open **Updates**, choose **Download update** and then **Install and restart**. This works on Linux and Windows and, from 0.7.2, on macOS. Coming from 0.7.0 or 0.7.1 on macOS you update by hand one last time: download the zip from the release page and replace the app. You can turn automatic checks off in **Settings → Updates**.
 
 ![Updates panel with the installed version and how updates work](docs/screenshots/updates.png)
 
@@ -164,6 +173,7 @@ npm test                  # unit tests
 npm run test:browser      # real browser flow (use xvfb-run on a headless Linux machine)
 npm run dist:mac          # macOS zips for Apple silicon and Intel
 npm run dist:linux        # Linux AppImage
+npm run dist:win          # Windows installer (on Linux this needs wine, for example the electronuserland/builder:wine image)
 ```
 
 ## Support the work

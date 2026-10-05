@@ -18,6 +18,7 @@
     "test:browser": "node test/browser.cjs",
     "dist:linux": "electron-builder --linux AppImage --x64 --publish never",
     "dist:mac": "electron-builder --mac zip --arm64 --x64 --publish never",
+    "dist:win": "electron-builder --win nsis --x64 --publish never -c.extraMetadata.name=Dioptra",
     "test:claude": "node test/claude.cjs",
     "test:claude-session": "node test/claude-session.cjs",
     "test:workspace": "node test/workspace.cjs",
@@ -57,6 +58,11 @@
         "AppImage"
       ],
       "syncDesktopName": true
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
     },
     "mac": {
       "category": "public.app-category.developer-tools",

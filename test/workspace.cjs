@@ -186,7 +186,7 @@ const { execFileSync } = require('node:child_process');
     await pollUI(async()=>{const s=(await window.browser.command('state')).state;return !s.tabs.find(t=>t.id===s.activeId)?.loading;});
     await app.evaluate(({session},dest)=>{session.fromPartition('persist:web').once('will-download',(_e,item)=>item.setSavePath(dest));},path.join(profile,'sample.txt'));
     await app.evaluate(({webContents},url)=>webContents.getAllWebContents().find(w=>w.getURL()===url).executeJavaScript("const a=document.createElement('a');a.href='/download';document.body.append(a);a.click()"),`http://localhost:${port}/`);
-    await pollUI(async()=>{const s=(await window.browser.command('state')).state;return s.library.downloads.some(d=>d.state==='completed'&&d.path.endsWith('/sample.txt'));});
+    await pollUI(async()=>{const s=(await window.browser.command('state')).state;return s.library.downloads.some(d=>d.state==='completed'&&/[\\/]sample\.txt$/.test(d.path));});
     assert.equal(fs.readFileSync(path.join(profile,'sample.txt'),'utf8'),'download');
     await cmd('panel','library');await ui.getByRole('button',{name:'Downloads',exact:true}).click();
     await app.evaluate(({session},dest)=>{session.fromPartition('persist:web').once('will-download',(_e,item)=>item.setSavePath(dest));},path.join(profile,'slow.txt'));
