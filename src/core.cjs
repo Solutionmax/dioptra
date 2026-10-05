@@ -36,6 +36,12 @@ function navigationURL(input) {
   if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) throw new Error('Use an http or https address without credentials.');
   return url.href;
 }
+// Compare: the ratio is the share of the left pane. Each pane keeps at least a quarter, a 6 px bar sits between them.
+const compareShare = value => (Number.isFinite(value) ? Math.max(.25, Math.min(.75, value)) : .5);
+function compareLayout(width, ratio) {
+  const left = Math.max(1, Math.round(width * compareShare(ratio)) - 3);
+  return { left: { x: 0, width: left }, splitter: { x: left, width: 6 }, right: { x: left + 6, width: Math.max(1, width - left - 6) } };
+}
 function devtoolsLayout(width, height, sidebar, dock, ratio, open) {
   const page = { x: 0, y: 132, width: Math.max(1, width - sidebar), height: Math.max(1, height - 162) };
   if (!open) return { page, bar: null, tools: null, splitter: null };
@@ -60,9 +66,9 @@ function devtoolsLayout(width, height, sidebar, dock, ratio, open) {
   return { page, bar, tools, splitter };
 }
 function readSettings(file) {
-  if (!fs.existsSync(file)) return { rules: [], tabs: ['about:blank'], updateFeed: '', autoUpdates: true, autoUpdatesChosen: false, devtoolsDock: 'bottom', devtoolsRatio: .4, sslVerification: false };
+  if (!fs.existsSync(file)) return { rules: [], tabs: ['about:blank'], updateFeed: '', autoUpdates: true, autoUpdatesChosen: false, devtoolsDock: 'bottom', devtoolsRatio: .4, compareRatio: .5, sslVerification: false };
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-  return { sslVerification: data.sslVerification === true, rules: validateRules(data.rules), tabs: Array.isArray(data.tabs) && data.tabs.length ? data.tabs.slice(0, 50).map(navigationURL) : ['about:blank'], updateFeed: typeof data.updateFeed === 'string' ? data.updateFeed : '', autoUpdates: data.autoUpdatesChosen === true ? data.autoUpdates !== false : true, autoUpdatesChosen: data.autoUpdatesChosen === true, devtoolsDock: ['left', 'right', 'bottom'].includes(data.devtoolsDock) ? data.devtoolsDock : 'bottom', devtoolsRatio: Number.isFinite(data.devtoolsRatio) ? Math.max(.2, Math.min(.7, data.devtoolsRatio)) : .4 };
+  return { sslVerification: data.sslVerification === true, rules: validateRules(data.rules), tabs: Array.isArray(data.tabs) && data.tabs.length ? data.tabs.slice(0, 50).map(navigationURL) : ['about:blank'], updateFeed: typeof data.updateFeed === 'string' ? data.updateFeed : '', autoUpdates: data.autoUpdatesChosen === true ? data.autoUpdates !== false : true, autoUpdatesChosen: data.autoUpdatesChosen === true, devtoolsDock: ['left', 'right', 'bottom'].includes(data.devtoolsDock) ? data.devtoolsDock : 'bottom', devtoolsRatio: Number.isFinite(data.devtoolsRatio) ? Math.max(.2, Math.min(.7, data.devtoolsRatio)) : .4, compareRatio: compareShare(data.compareRatio) };
 }
 function saveSettings(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -85,4 +91,4 @@ function ptrName(ip) {
   return `${groups.map(g => g.padStart(4, '0')).join('').split('').reverse().join('.')}.ip6.arpa`;
 }
 const daysLeft = (expires, now = Date.now()) => Math.floor((expires - now) / 86400000);
-module.exports = { ptrName, certSummary, daysLeft, ROUTE_BAR_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, validateRules, resolverRules, navigationURL, readSettings, saveSettings };
+module.exports = { ptrName, certSummary, daysLeft, ROUTE_BAR_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, compareLayout, compareShare, validateRules, resolverRules, navigationURL, readSettings, saveSettings };

@@ -27,7 +27,7 @@ Moving a website to a new server usually means editing `/etc/hosts`, flushing DN
 - **Always know where you are.** The route bar shows the rule, the IP you are really connected to with its reverse DNS name, the certificate state and the HTTP status.
 - **DNS records at a click.** The A, AAAA, CNAME, MX, TXT and NS records of the domain. In Compare the zone on the new server sits next to public DNS, so a mail or TXT record that did not come along shows up before you switch.
 - **See what the site runs on.** WordPress, WooCommerce, Drupal, Laravel and more, with the PHP version when the server reports it. In Compare a different PHP version on the old and new server is marked.
-- **Compare.** The new server and the live site side by side, each with its own cookies. Or put another URL on the right, such as the copy of a site on a temporary test domain.
+- **Compare.** The new server and the live site side by side, each with its own cookies. Or put another URL on the right, such as the copy of a site on a temporary test domain. Drag the bar between the panes to give one side more room.
 - **Differences.** Dioptra fetches the page from both servers and shows what changed in the HTML, the headers and the external domains the page loads. Injected scripts and other signs of a hacked site stand out immediately.
 - **Claude built in.** Install the official Claude in Chrome extension and let Claude read, click and screenshot your tabs, including both sides of a comparison.
 - **Made for testing servers.** Certificate errors on a new server can be skipped, while Claude and sign-in services always keep strict certificate checks.
@@ -99,6 +99,8 @@ Four things in the window open a small card with details:
 Click **Compare**. The left pane is the new server through your rule, the right pane is the live site through normal DNS. Each pane has its own route bar and its own temporary cookies. Click a pane to use the address bar, back, forward and find in that pane.
 
 To compare with a different address, click the domain in the right pane bar and type the other URL, for example the copy of the site on a temporary test domain. **Same URL** puts the right pane back on the page of the left pane. Compare also works on a site without a domain rule: the right pane then asks which address to compare with. The right pane always uses normal DNS, so a site that is only reachable through a rule goes on the left. Differences is available when both panes are on the same site.
+
+Drag the bar between the two panes to make one side larger, for example to see the desktop layout of the new server next to a narrow live site. Each pane keeps at least a quarter of the width. As soon as the panes are not equal a small button appears between the pane bars: one click makes them equal again, and so does a double click on the bar. The position is remembered.
 
 ![Compare view with Hostfile on the left and Live on the right](docs/screenshots/compare.png)
 

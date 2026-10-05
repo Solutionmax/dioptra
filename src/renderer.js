@@ -118,8 +118,59 @@ $('auth-dialog').addEventListener('cancel', event => { event.preventDefault(); c
 command('state').then(result => { if (result.ok) render(result.state); });
 
 $('maker-website').onclick = () => command('new-tab', 'https://solutionmax.net/');
+$('maker-github').onclick = () => command('new-tab', 'https://github.com/Solutionmax/dioptra');
 $('maker-coffee').onclick = () => command('new-tab', 'https://buymeacoffee.com/solutionmax');
 $('tools-close').onclick = () => command('devtools');
+// Compare: drag the bar between the panes. The press starts in the gap between the two websites and the pointer
+// stays captured while it moves over them. The element is never rebuilt, a rebuild would drop the capture.
+const splitter = $('compare-splitter');
+let splitDrag = null, splitFrame = 0;
+const share = ratio => Math.max(.25, Math.min(.75, ratio));
+const setShare = (ratio, commit = true) => command('compare-ratio', { ratio: Math.round(share(ratio) * 1000) / 1000, commit });
+function renderSplitter() {
+  const [left, right] = state.comparison && state.paneLayout.length === 2 ? [...state.paneLayout].sort((a, b) => a.banner.x - b.banner.x) : [];
+  // The reset button is a neighbour of the bar, not a child: a separator hides its children from screen readers.
+  const reset = $('compare-reset');
+  splitter.hidden = !left; reset.hidden = !left || state.compareRatio === .5;
+  if (!left) { if (splitDrag) finishSplitDrag(true); return; }
+  const x = left.banner.x + left.banner.width, percent = Math.round(state.compareRatio * 100);
+  place(splitter, { x, y: left.banner.y, width: right.banner.x - x, height: left.page.y + left.page.height - left.banner.y });
+  splitter.setAttribute('aria-valuenow', String(percent));
+  splitter.setAttribute('aria-valuetext', `Left pane ${percent} percent`);
+  $('compare-share').textContent = `${percent} · ${100 - percent}`;
+  reset.style.left = `${x + (right.banner.x - x) / 2}px`; reset.style.top = `${left.banner.y + 7}px`;
+  splitter.querySelector('.grip').hidden = !reset.hidden;
+}
+function finishSplitDrag(cancel) {
+  if (!splitDrag) return;
+  const drag = splitDrag; splitDrag = null; cancelAnimationFrame(splitFrame); splitFrame = 0;
+  splitter.classList.remove('dragging');
+  setShare(cancel ? drag.ratio : drag.latest);
+}
+splitter.onpointerdown = event => {
+  if (event.button !== 0) return;
+  event.preventDefault(); splitter.setPointerCapture(event.pointerId);
+  splitDrag = { ratio: state.compareRatio, latest: state.compareRatio }; splitter.classList.add('dragging');
+};
+splitter.onpointermove = event => {
+  if (!splitDrag) return;
+  // A release that never arrived (button let go outside the window) ends the drag where it is.
+  if (!event.buttons) return finishSplitDrag(false);
+  const width = window.innerWidth - (state.panel ? Math.min(480, Math.floor(window.innerWidth * .48)) : 0);
+  splitDrag.latest = share(event.clientX / width);
+  // One layout per frame is enough; every step resizes two websites.
+  if (!splitFrame) splitFrame = requestAnimationFrame(() => { splitFrame = 0; if (splitDrag) setShare(splitDrag.latest, false); });
+};
+splitter.onpointerup = () => finishSplitDrag(false);
+splitter.onpointercancel = splitter.onlostpointercapture = () => finishSplitDrag(true);
+splitter.ondblclick = () => setShare(.5);
+// The button hides once the panes are equal: keyboard users continue on the bar, a mouse click leaves no focus ring behind.
+$('compare-reset').onclick = event => { setShare(.5); if (event.detail === 0) splitter.focus(); };
+splitter.onkeydown = event => {
+  if (event.target !== splitter || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+  event.preventDefault(); setShare(state.compareRatio + (event.key === 'ArrowRight' ? .05 : -.05));
+};
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && splitDrag) { event.preventDefault(); finishSplitDrag(true); } });
 document.querySelectorAll('[data-dock]').forEach(button => { button.onclick = () => command('devtools-layout', { dock: button.dataset.dock }); });
 let toolsDrag = null;
 function dragDock(event) {
@@ -230,7 +281,7 @@ function renderWorkspace() {
     const t=state.tabs.find(t=>t.id===pane.id);if(!t) continue;
     const selected=t.id===state.activeId;
     const isRight=t.id===state.comparison.live, peer=isRight?left:right;
-    const bar=isRight && (compareWith!==null || t.startPage) ? compareWithBar(t) : routeBar(t,{pane:true,selected,peer,other:isRight?otherSite:undefined});place(bar,pane.banner);bar.classList.toggle('compact',pane.banner.width<800);$('pane-bars').append(bar);
+    const bar=isRight && (compareWith!==null || t.startPage) ? compareWithBar(t) : routeBar(t,{pane:true,selected,peer,other:isRight?otherSite:undefined});place(bar,pane.banner);bar.classList.toggle('compact',pane.banner.width<800);bar.classList.add(isRight?'pane-right':'pane-left');$('pane-bars').append(bar);
     if(t.error) {
       const error=el('div','comparison-error');place(error,pane.page);
       error.append(el('h2','',`${t.route.label} could not load`),el('p','',t.url),el('code','',t.error));
@@ -240,6 +291,7 @@ function renderWorkspace() {
       hint.append(el('code','','staging.example.com'));empty.append(el('b','','What do you want to compare with?'),hint);$('comparison-errors').append(empty);
     }
   }
+  renderSplitter();
   // The bars are rebuilt on every state update: keep the caret, and put it in the field when the field first shows.
   const field=$('compare-with');
   if(field && caret) { if(document.hasFocus()) { field.focus(); field.setSelectionRange(...caret); } } else if(field && !oldField) { field.focus(); field.select(); }

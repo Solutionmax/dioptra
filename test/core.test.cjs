@@ -58,6 +58,30 @@ test('DevTools docking leaves separate website, resize handle and inspector area
   assert.deepEqual(devtoolsLayout(1200, 900, 0, 'right', .5, false).page, { x: 0, y: 132, width: 1200, height: 738 });
 });
 
+test('Compare panes share the width around a 6 px bar and keep at least a quarter each', () => {
+  const { compareLayout, compareShare } = require('../src/core.cjs');
+  const equal = compareLayout(1280, .5);
+  assert.deepEqual(equal, { left: { x: 0, width: 637 }, splitter: { x: 637, width: 6 }, right: { x: 643, width: 637 } });
+  for (const [width, ratio] of [[1280, .7], [1281, .25], [500, .75], [999, .333]]) {
+    const { left, splitter, right } = compareLayout(width, ratio);
+    assert.equal(left.x, 0); assert.equal(left.width, splitter.x); assert.equal(splitter.x + splitter.width, right.x);
+    assert.equal(right.x + right.width, width, 'the panes and the bar fill the width exactly');
+  }
+  assert.ok(compareLayout(1280, .7).left.width > compareLayout(1280, .7).right.width * 2);
+  assert.deepEqual(compareLayout(1280, 5), compareLayout(1280, .75), 'a pane can never be dragged away');
+  assert.deepEqual(compareLayout(1280, -1), compareLayout(1280, .25));
+  assert.deepEqual([.1, .9, .6, NaN, undefined, '0.7'].map(compareShare), [.25, .75, .6, .5, .5, .5]);
+});
+
+test('The Compare pane share is restored from settings and repaired when it is out of range', () => {
+  const { readSettings, saveSettings } = require('../src/core.cjs');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dioptra-share-')), 'settings.json');
+  assert.equal(readSettings(file).compareRatio, .5, 'equal panes on a new profile');
+  saveSettings(file, { ...readSettings(file), compareRatio: .68 }); assert.equal(readSettings(file).compareRatio, .68);
+  saveSettings(file, { ...readSettings(file), compareRatio: 3 }); assert.equal(readSettings(file).compareRatio, .75);
+  fs.writeFileSync(file, JSON.stringify({ rules: [], compareRatio: 'wide' })); assert.equal(readSettings(file).compareRatio, .5);
+});
+
 test('updates default to the GitHub feed and automatic checks, unless the user turned them off', () => {
   const { DEFAULT_UPDATE_FEED, ROUTE_BAR_HEIGHT } = require('../src/core.cjs');
   assert.equal(DEFAULT_UPDATE_FEED, 'https://github.com/Solutionmax/dioptra/releases/latest/download/');

@@ -2,7 +2,7 @@
   "name": "migratiebrowser",
   "productName": "Dioptra",
   "desktopName": "migratiebrowser.desktop",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "description": "A browser with per-domain IP overrides for migration testing",
   "author": {
     "name": "SolutionMAX",
@@ -21,7 +21,8 @@
     "test:claude": "node test/claude.cjs",
     "test:claude-session": "node test/claude-session.cjs",
     "test:workspace": "node test/workspace.cjs",
-    "test:routebar": "node test/routebar.cjs"
+    "test:routebar": "node test/routebar.cjs",
+    "test:drag": "node test/compare-drag.cjs"
   },
   "dependencies": {
     "electron-updater": "6.8.9",

@@ -10,7 +10,7 @@ const fs = require('node:fs/promises');
 const { createClaude } = require('./claude.cjs');
 const { installClaude, directoryName } = require('./claude-install.cjs');
 const { pathToFileURL } = require('node:url');
-const { ptrName, certSummary, daysLeft, ROUTE_BAR_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, validateRules, resolverRules, navigationURL, readSettings, saveSettings } = require('./core.cjs');
+const { ptrName, certSummary, daysLeft, ROUTE_BAR_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, compareLayout, validateRules, resolverRules, navigationURL, readSettings, saveSettings } = require('./core.cjs');
 const { fetchDocument, buildReport, summaryText } = require('./differences.cjs');
 const { dnsReport, canLookup } = require('./dns-records.cjs');
 
@@ -195,7 +195,7 @@ function persist() {
   if (serialized !== lastSavedSettings) { saveSettings(settingsFile, config); lastSavedSettings = serialized; }
 }
 function state() {
-  return { view: visibleComparison() ? 'compare' : viewMode, routeBarHeight: visibleComparison() ? 0 : ROUTE_BAR_HEIGHT, differences: viewMode === 'differences' ? differences : { ...differences, report: null }, performance, comparison: visibleComparison(), paneLayout, find: findState, sslVerification: config.sslVerification, activeSSL, library: library?.snapshot() || {bookmarks:[],history:[],downloads:[]}, downloads: [...downloadItems.values()].map(d=>d.record), tabs: [...tabs.values()].map(t => ({ mode: t.mode, route: route(t), site: t.site || null, connection: t.connection, id: t.id, title: t.title, url: t.url, startPage: t.startPage, loading: t.loading, devtools: Boolean(t.toolsOpen), error: t.error, back: t.view.webContents.navigationHistory.canGoBack(), forward: t.view.webContents.navigationHistory.canGoForward() })), activeId, rules: config.rules, activeRules, pending: pending(), panel, platform: process.platform, versions: { app: app.getVersion(), electron: process.versions.electron, chromium: process.versions.chrome }, updateFeed: updateFeed(), autoUpdates: config.autoUpdates, update: updateState, devtoolsDock: config.devtoolsDock, devtoolsRatio: config.devtoolsRatio, toolsLayout, draggingTools, claude: claudeState };
+  return { view: visibleComparison() ? 'compare' : viewMode, routeBarHeight: visibleComparison() ? 0 : ROUTE_BAR_HEIGHT, differences: viewMode === 'differences' ? differences : { ...differences, report: null }, performance, comparison: visibleComparison(), paneLayout, find: findState, sslVerification: config.sslVerification, activeSSL, library: library?.snapshot() || {bookmarks:[],history:[],downloads:[]}, downloads: [...downloadItems.values()].map(d=>d.record), tabs: [...tabs.values()].map(t => ({ mode: t.mode, route: route(t), site: t.site || null, connection: t.connection, id: t.id, title: t.title, url: t.url, startPage: t.startPage, loading: t.loading, devtools: Boolean(t.toolsOpen), error: t.error, back: t.view.webContents.navigationHistory.canGoBack(), forward: t.view.webContents.navigationHistory.canGoForward() })), activeId, rules: config.rules, activeRules, pending: pending(), panel, platform: process.platform, versions: { app: app.getVersion(), electron: process.versions.electron, chromium: process.versions.chrome }, updateFeed: updateFeed(), autoUpdates: config.autoUpdates, update: updateState, devtoolsDock: config.devtoolsDock, devtoolsRatio: config.devtoolsRatio, compareRatio: config.compareRatio, toolsLayout, draggingTools, claude: claudeState };
 }
 function emit() {
   // Tab views are destroyed while quitting; state() must not touch them then.
@@ -213,7 +213,7 @@ function layout() {
     const selected = pair ? [pair.host, pair.live].includes(tab.id) : tab.id === activeId;
     const visible = selected && !authRequest && !draggingTools && !differing;
     const bounds = devtoolsLayout(width, height, sidebar, config.devtoolsDock, config.devtoolsRatio, !pair && tab.toolsOpen);
-    if (pair) { const half = Math.floor(bounds.page.width / 2); bounds.page.x = tab.id === pair.live ? half + 2 : 0; bounds.page.width = tab.id === pair.live ? bounds.page.width - half - 2 : half - 2; }
+    if (pair) { const split = compareLayout(bounds.page.width, config.compareRatio); Object.assign(bounds.page, tab.id === pair.live ? split.right : split.left); }
     if (findState.open) { bounds.page.y += 38; bounds.page.height -= 38; }
     // The route bar(s) fill the last 36px of the header, above the pages: one full width bar, or one bar per pane when comparing.
     const banner = { x: pair ? bounds.page.x : 0, y: 132 - ROUTE_BAR_HEIGHT, width: pair ? bounds.page.width : Math.max(1, width - sidebar), height: ROUTE_BAR_HEIGHT };
@@ -612,6 +612,10 @@ ipcMain.handle('browser', async (event, action, data) => {
       case 'restart': {
         const answer = await dialog.showMessageBox(win, { type: 'question', message: 'Apply domain rules and SSL settings, then restart?', detail: 'Tab addresses will be restored. Unsaved form entries will be lost.', buttons: ['Cancel', 'Restart'], defaultId: 0, cancelId: 0 });
         if (answer.response === 1) { persist(); app.relaunch(); app.quit(); } break;
+      }
+      case 'compare-ratio': {
+        if (!Number.isFinite(data?.ratio) || data.ratio < .25 || data.ratio > .75) throw new Error('Invalid pane size.');
+        config.compareRatio = data.ratio; layout(); if (data.commit !== false) persist(); break;
       }
       case 'devtools': toggleDevTools(tab); break;
       case 'devtools-drag': draggingTools = Boolean(data); layout(); break;

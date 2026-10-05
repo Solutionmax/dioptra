@@ -46,6 +46,43 @@ const { execFileSync } = require('node:child_process');
     fs.mkdirSync('artifacts',{recursive:true});await ui.screenshot({path:'artifacts/workspace-compare.png'});
     const geometry=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].contentView.children.filter(v=>v.webContents.getURL().startsWith('http://localhost:')).map(v=>v.getBounds()));
     assert.equal(geometry.length,2); assert.ok(geometry[0].x+geometry[0].width<=geometry[1].x);
+    { // Resize the Compare panes: layout, limits, Escape, keyboard, reset and persistence. The drag itself needs a real mouse: test/compare-drag.cjs.
+      const panes=async()=>[...(await cmd('state')).state.paneLayout].sort((a,b)=>a.page.x-b.page.x);
+      const percent=async()=>Math.round((await cmd('state')).state.compareRatio*100);
+      const saved=()=>JSON.parse(fs.readFileSync(path.join(profile,'settings.json'),'utf8')).compareRatio;
+      const bar=ui.locator('#compare-splitter'), reset=ui.locator('#compare-reset'), grip=bar.locator('.grip');
+      let [l,r]=await panes(); assert.ok(Math.abs(l.page.width-r.page.width)<=1,'panes start equal');
+      const box=await bar.boundingBox(), total=r.page.x+r.page.width;
+      assert.equal(box.x,l.page.x+l.page.width,'the bar fills the gap between the panes');assert.equal(box.x+box.width,r.page.x);assert.equal(box.width,6);
+      assert.equal(box.y,l.banner.y);assert.equal(box.y+box.height,l.page.y+l.page.height,'the bar runs from the pane bars to the footer');
+      assert.ok(await grip.isVisible());assert.ok(await reset.isHidden(),'no reset button while the panes are equal');
+      assert.equal((await cmd('compare-ratio',{ratio:.7,commit:false})).ok,true);
+      await pollUI(()=>document.querySelector('#compare-splitter').getAttribute('aria-valuenow')==='70');
+      assert.equal(await ui.locator('#compare-share').textContent(),'70 · 30');assert.notEqual(saved(),.7,'nothing is saved while dragging');
+      assert.equal((await cmd('compare-ratio',{ratio:.7})).ok,true);assert.equal(saved(),.7,'the position is saved on release');
+      [l,r]=await panes();assert.ok(l.page.width>r.page.width*2,'the left pane is larger');assert.equal(l.page.width+6,r.page.x);assert.equal(r.page.x+r.page.width,total,'the panes still fill the width');
+      const views=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].contentView.children.filter(v=>v.webContents.getURL().startsWith('http://localhost:')).map(v=>v.getBounds()).sort((a,b)=>a.x-b.x));
+      assert.deepEqual(views.map(v=>[v.x,v.width]),[[l.page.x,l.page.width],[r.page.x,r.page.width]],'the websites follow the bar');
+      await pollUI(()=>!document.querySelector('#compare-reset').hidden);assert.ok(await reset.isVisible(),'unequal panes show the reset button');assert.ok(await grip.isHidden());
+      const now=await bar.boundingBox();assert.equal(now.x,l.page.x+l.page.width,'the bar moved with the panes');
+      const bars=await ui.locator('#pane-bars .route-bar').evaluateAll(nodes=>nodes.map(n=>[n.className.match(/pane-(left|right)/)?.[1],n.getBoundingClientRect().x]).sort((a,b)=>a[1]-b[1]).map(b=>b[0]));
+      assert.deepEqual(bars,['left','right'],'each pane bar knows its side');
+      await ui.mouse.move(now.x+3,now.y+300);await ui.mouse.down();
+      await pollUI(()=>document.querySelector('#compare-splitter').classList.contains('dragging'));assert.ok(await ui.locator('#compare-share').isVisible(),'the share shows while dragging');
+      await ui.keyboard.press('Escape');await pollUI(()=>!document.querySelector('#compare-splitter').classList.contains('dragging'));await ui.mouse.up();
+      assert.equal(await percent(),70,'Escape ends the drag and keeps the position it started from');
+      await bar.focus();await ui.keyboard.press('ArrowRight');await pollUI(async()=>Math.round((await window.browser.command('state')).state.compareRatio*100)===75);
+      await ui.keyboard.press('ArrowRight');assert.equal(await percent(),75,'a pane keeps at least a quarter');
+      await ui.keyboard.press('ArrowLeft');await pollUI(async()=>Math.round((await window.browser.command('state')).state.compareRatio*100)===70);
+      for(const ratio of [.9,.1,'x',undefined]){const result=await cmd('compare-ratio',{ratio});assert.equal(result.ok,false,`ratio ${ratio} is refused`);}
+      assert.equal(await percent(),70);
+      await reset.focus();await ui.keyboard.press('Enter');await pollUI(async()=>(await window.browser.command('state')).state.compareRatio===.5);
+      [l,r]=await panes();assert.ok(Math.abs(l.page.width-r.page.width)<=1,'reset makes the panes equal');
+      await pollUI(()=>document.querySelector('#compare-reset').hidden);assert.ok(await grip.isVisible());assert.equal(await ui.evaluate(()=>document.activeElement.id),'compare-splitter','after a reset by keyboard the focus continues on the bar');
+      assert.equal((await cmd('compare-ratio',{ratio:.6})).ok,true);const moved=await bar.boundingBox();
+      await ui.mouse.dblclick(moved.x+3,moved.y+300);await pollUI(async()=>(await window.browser.command('state')).state.compareRatio===.5);
+      assert.equal(saved(),.5);
+    }
     await cmd('activate',normal.id); await cmd('navigate',`http://localhost:${port}/redirect`);
     await pollUI(async()=>{const s=(await window.browser.command('state')).state;return s.tabs.find(t=>t.id===s.activeId)?.url.endsWith('/final');});
     await pollUI(async()=>{const s=(await window.browser.command('state')).state;const t=s.tabs.find(t=>t.id===s.activeId);return !t.loading&&t.connection?.url===t.url;});
@@ -78,7 +115,7 @@ const { execFileSync } = require('node:child_process');
     await ui.getByRole('button',{name:'Bookmarks',exact:true}).click();
     await ui.locator('#library-list').getByText(`http://localhost:${port}/final`,{exact:true}).waitFor();
     await cmd('panel',null);await cmd('activate',mapped.id);await cmd('close-tab',normal.id);
-    s=(await cmd('state')).state;assert.equal(s.comparison,null);assert.equal(s.paneLayout.length,1,'closing inactive peer clears its banner');
+    s=(await cmd('state')).state;assert.equal(s.comparison,null);assert.equal(s.paneLayout.length,1,'closing inactive peer clears its banner');assert.ok(await ui.locator('#compare-splitter').isHidden(),'no bar outside Compare');
     assert.ok(s.paneLayout[0].page.width>geometry[0].width,'remaining pane expands');
     // Compare with another URL: the right pane takes another address, with and without a domain rule.
     {
