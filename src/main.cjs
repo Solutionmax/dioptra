@@ -10,7 +10,7 @@ const fs = require('node:fs/promises');
 const { createClaude } = require('./claude.cjs');
 const { installClaude, directoryName } = require('./claude-install.cjs');
 const { pathToFileURL } = require('node:url');
-const { ptrName, certSummary, daysLeft, ROUTE_BAR_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, compareLayout, validateRules, resolverRules, navigationURL, readSettings, saveSettings } = require('./core.cjs');
+const { ptrName, certSummary, daysLeft, ROUTE_BAR_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, compareLayout, validateRules, expandRules, resolverRules, parseServers, MAX_SERVER_CSV, navigationURL, readSettings, saveSettings } = require('./core.cjs');
 const { fetchDocument, buildReport, summaryText } = require('./differences.cjs');
 const { dnsReport, canLookup } = require('./dns-records.cjs');
 
@@ -33,6 +33,7 @@ try { config = readSettings(settingsFile); } catch (error) {
 }
 const activeSSL = config.sslVerification;
 const activeRules = structuredClone(config.rules);
+const activeHosts = expandRules(activeRules); // every name the active rules cover, www names included
 const activeResolver = resolverRules(activeRules);
 let savedResolver = activeResolver;
 app.commandLine.appendSwitch('host-resolver-rules', activeResolver);
@@ -41,7 +42,7 @@ app.commandLine.appendSwitch('no-proxy-server');
 app.commandLine.appendSwitch('lang', 'en-US');
 app.enableSandbox();
 const uiURL = pathToFileURL(path.join(__dirname, 'index.html')).href;
-let win, webSession, claudeAuthSession, activeId, panel = null, nextId = 1, quitting = false, authRequest = null;
+let win, webSession, claudeAuthSession, activeId, panel = null, nextId = 1, quitting = false, tabsRestored = false, authRequest = null;
 // macOS builds are ad-hoc signed: electron-updater cannot install them, so the notice links to the download page.
 // macOS can install updates itself since builds carry a fixed signing identity (scripts/sign-mac.cjs).
 const canInstall = true;
@@ -113,7 +114,7 @@ function memoryData() {
 function dnsTarget(tab) {
   const host = route(tab).host;
   if (tab.mode === 'auth' || !canLookup(host)) return null;
-  const rule = activeRules.find(r => r.enabled && r.domain === host), pair = visibleComparison();
+  const rule = activeHosts.find(r => r.enabled && r.domain === host), pair = visibleComparison();
   const paired = pair ? [pair.host, pair.live].includes(tab.id) : viewMode === 'differences' && tab.id === activeId;
   return { host, ruleIP: rule && (paired || tab.mode === 'hostfile') ? rule.ip : '', compare: Boolean(rule && paired) };
 }
@@ -181,7 +182,7 @@ async function openCard(kind, id, anchor) {
 }
 function route(tab) {
   let host = ''; try { host = new URL(tab.url).hostname; } catch {}
-  const rule = tab.mode === 'hostfile' && activeRules.find(r => r.enabled && r.domain === host);
+  const rule = tab.mode === 'hostfile' && activeHosts.find(r => r.enabled && r.domain === host);
   const ssl = !tab.url.startsWith('https:') ? 'HTTP · no TLS' : activeSSL || protectedHost(host) || tab.mode === 'auth' ? 'SSL checks on' : 'SSL checks off';
   return { label: rule ? 'HOSTFILE' : 'LIVE', configured: rule?.ip || '', host, ssl, dns: tab.mode !== 'auth' && canLookup(host), cert: ssl === 'SSL checks on' && tab.mode !== 'auth' && certificates.has(certKey(tab.mode, host)) };
 }
@@ -189,13 +190,16 @@ const tabs = new Map();
 const current = () => tabs.get(activeId);
 const pending = () => savedResolver !== activeResolver || config.sslVerification !== activeSSL;
 function persist() {
-  config.tabs = [...tabs.values()].map(t => (t.view.webContents.session === webSession && /^https?:\/\//i.test(t.url) ? t.url : 'about:blank'));
-  if (!config.tabs.length) config.tabs = ['about:blank'];
+  // Until the saved tabs are open again the list in the settings is the one to keep (quit during startup).
+  if (tabsRestored) {
+    config.tabs = [...tabs.values()].map(t => (t.view.webContents.session === webSession && /^https?:\/\//i.test(t.url) ? t.url : 'about:blank'));
+    if (!config.tabs.length) config.tabs = ['about:blank'];
+  }
   const serialized = JSON.stringify(config);
   if (serialized !== lastSavedSettings) { saveSettings(settingsFile, config); lastSavedSettings = serialized; }
 }
 function state() {
-  return { view: visibleComparison() ? 'compare' : viewMode, routeBarHeight: visibleComparison() ? 0 : ROUTE_BAR_HEIGHT, differences: viewMode === 'differences' ? differences : { ...differences, report: null }, performance, comparison: visibleComparison(), paneLayout, find: findState, sslVerification: config.sslVerification, activeSSL, library: library?.snapshot() || {bookmarks:[],history:[],downloads:[]}, downloads: [...downloadItems.values()].map(d=>d.record), tabs: [...tabs.values()].map(t => ({ mode: t.mode, route: route(t), site: t.site || null, connection: t.connection, id: t.id, title: t.title, url: t.url, startPage: t.startPage, loading: t.loading, devtools: Boolean(t.toolsOpen), error: t.error, back: t.view.webContents.navigationHistory.canGoBack(), forward: t.view.webContents.navigationHistory.canGoForward() })), activeId, rules: config.rules, activeRules, pending: pending(), panel, platform: process.platform, versions: { app: app.getVersion(), electron: process.versions.electron, chromium: process.versions.chrome }, updateFeed: updateFeed(), autoUpdates: config.autoUpdates, update: updateState, devtoolsDock: config.devtoolsDock, devtoolsRatio: config.devtoolsRatio, compareRatio: config.compareRatio, toolsLayout, draggingTools, claude: claudeState };
+  return { view: visibleComparison() ? 'compare' : viewMode, routeBarHeight: visibleComparison() ? 0 : ROUTE_BAR_HEIGHT, differences: viewMode === 'differences' ? differences : { ...differences, report: null }, performance, comparison: visibleComparison(), paneLayout, find: findState, sslVerification: config.sslVerification, activeSSL, library: library?.snapshot() || {bookmarks:[],history:[],downloads:[]}, downloads: [...downloadItems.values()].map(d=>d.record), tabs: [...tabs.values()].map(t => ({ mode: t.mode, route: route(t), site: t.site || null, connection: t.connection, id: t.id, title: t.title, url: t.url, startPage: t.startPage, loading: t.loading, devtools: Boolean(t.toolsOpen), error: t.error, back: t.view.webContents.navigationHistory.canGoBack(), forward: t.view.webContents.navigationHistory.canGoForward() })), activeId, rules: config.rules, activeRules, servers: config.servers, pending: pending(), panel, platform: process.platform, versions: { app: app.getVersion(), electron: process.versions.electron, chromium: process.versions.chrome }, updateFeed: updateFeed(), autoUpdates: config.autoUpdates, update: updateState, devtoolsDock: config.devtoolsDock, devtoolsRatio: config.devtoolsRatio, compareRatio: config.compareRatio, toolsLayout, draggingTools, claude: claudeState };
 }
 function emit() {
   // Tab views are destroyed while quitting; state() must not touch them then.
@@ -389,7 +393,7 @@ function stopCompare() { const pair=comparison; comparison=null; if(pair) {activ
 function ruledTab(what) {
   const tab=visibleComparison() ? tabs.get(comparison.host) : current();
   if (!tab || tab.mode !== 'hostfile' || !/^https?:/.test(tab.url)) throw new Error(`Open a website in a Hostfile tab to ${what} it.`);
-  const rule=activeRules.find(r=>r.enabled && r.domain===new URL(tab.url).hostname);
+  const rule=activeHosts.find(r=>r.enabled && r.domain===new URL(tab.url).hostname);
   if (!rule) throw new Error('Add and apply a domain rule for this website first.');
   return { tab, rule };
 }
@@ -440,7 +444,7 @@ async function compare() {
   const tab=current();
   if (!tab || tab.mode !== 'hostfile' || !/^https?:/.test(tab.url)) throw new Error('Open a website to compare it.');
   // Without a rule both panes would show the same server, so the right pane starts empty and asks for another address.
-  const ruled=activeRules.some(r=>r.enabled && r.domain===new URL(tab.url).hostname);
+  const ruled=activeHosts.some(r=>r.enabled && r.domain===new URL(tab.url).hostname);
   if (tabs.size>=50) throw new Error('Close a tab before comparing.');
   if (comparison && tabs.has(comparison.live)) closeTab(comparison.live);
   await ensureLive();
@@ -609,6 +613,14 @@ ipcMain.handle('browser', async (event, action, data) => {
       case 'save-rules': {
         const rules = validateRules(data); saveSettings(settingsFile, { ...config, rules }); config.rules = rules; savedResolver = resolverRules(rules); lastSavedSettings = JSON.stringify(config); break;
       }
+      case 'import-servers': {
+        if (typeof data !== 'string' || data.length > MAX_SERVER_CSV) throw new Error('This file is too large for a server list.');
+        const { servers, skipped } = parseServers(data);
+        if (!servers.length) throw new Error('No servers found. Each line needs a server name and an IP address.');
+        config = { ...config, servers }; persist(); emit();
+        return { ok: true, imported: servers.length, skipped };
+      }
+      case 'clear-servers': config = { ...config, servers: [] }; persist(); break;
       case 'restart': {
         const answer = await dialog.showMessageBox(win, { type: 'question', message: 'Apply domain rules and SSL settings, then restart?', detail: 'Tab addresses will be restored. Unsaved form entries will be lost.', buttons: ['Cancel', 'Restart'], defaultId: 0, cancelId: 0 });
         if (answer.response === 1) { persist(); app.relaunch(); app.quit(); } break;
@@ -747,6 +759,7 @@ else {
     await win.loadFile(path.join(__dirname, 'index.html'));
     const restore = [...config.tabs];
     for (const url of restore) newTab(url);
+    tabsRestored = true;
     for (const type of ['frame','service-worker']) webSession.registerPreloadScript({ type, filePath: path.join(__dirname,'claude-preload.cjs') });
     try {
       await fs.access(path.join(extensionDirectory,'manifest.json'));
@@ -760,7 +773,12 @@ else {
     setupUpdater();
     setTimeout(() => { if (config.autoUpdates) checkForUpdates().catch(() => {}); }, 10000).unref();
     setInterval(() => { if (config.autoUpdates) checkForUpdates().catch(() => {}); }, 4 * 60 * 60 * 1000).unref();
-  }).catch(error => { dialog.showErrorBox('Browser could not start', error.stack || error.message); app.exit(1); });
+  }).catch(error => {
+    console.error('Dioptra could not start:', error?.stack || error);
+    // Quitting while the window is still loading ends up here too. A modal error box would then block the shutdown.
+    if (quitting) return app.exit(0);
+    dialog.showErrorBox('Browser could not start', error.stack || error.message); app.exit(1);
+  });
   app.on('before-quit', () => { if (!quitting && tabs.size) persist(); });
   app.on('window-all-closed', () => app.quit());
 }

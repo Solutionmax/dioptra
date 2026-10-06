@@ -1,6 +1,7 @@
 const $ = id => document.getElementById(id);
 let libraryTab = 'bookmarks', libraryKey = '';
-let state, editing = null, toastTimer, tabsKey = '', rulesKey = '';
+let state, editing = null, toastTimer, tabsKey = '', rulesKey = '', www = true, suggestions = [], suggestionTotal = 0, activeSuggestion = 0, suggestionChosen = false, serverPage = 0, serverNote = '';
+const SERVER_PAGE_SIZE = 8, MAX_SUGGESTIONS = 5, MAX_SERVER_CSV = 1024 * 1024; // the CSV limit is the one in core.cjs
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 7000); }
 async function command(action, data) { try { const result = await window.browser.command(action, data); if (!result.ok) toast(result.error); return result; } catch (error) { toast(error.message); return { ok: false }; } }
 function el(tag, className, text) { const node = document.createElement(tag); node.className = className; if (text !== undefined) node.textContent = text; return node; }
@@ -61,17 +62,20 @@ function render(next) {
   $('devtools').setAttribute('aria-pressed', String(Boolean(tab?.devtools)));
   $('rule-count').textContent = state.activeRules.filter(r => r.enabled).length;
   $('list-count').textContent = `${state.rules.length} domain${state.rules.length === 1 ? '' : 's'}`;
-  const nextRulesKey = JSON.stringify(state.rules);
+  const nextRulesKey = JSON.stringify([state.rules, state.servers]);
   if (rulesKey !== nextRulesKey) {
   rulesKey = nextRulesKey;
   $('rules').replaceChildren();
   for (const [index, rule] of state.rules.entries()) {
-    const row = el('div', 'rule'); const text = el('div', 'rule-text'); text.append(el('div', 'rule-domain', rule.domain), el('div', 'rule-ip', rule.ip)); row.append(text);
-    const toggle = el('button', 'toggle' + (rule.enabled ? ' on' : '')); toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-checked', String(rule.enabled)); toggle.setAttribute('aria-label', `Enable ${rule.domain}`); toggle.onclick = () => command('save-rules', state.rules.map((r, i) => i === index ? { ...r, enabled: !r.enabled } : r));
-    const edit = el('button', 'small', '✎'); edit.setAttribute('aria-label', `Edit ${rule.domain}`); edit.onclick = () => { editing = rule.domain; $('domain-input').value = rule.domain; $('ip-input').value = rule.ip; $('save-rule').textContent = 'Save'; $('cancel-edit').hidden = false; $('domain-input').focus(); };
+    const row = el('div', 'rule'); const text = el('div', 'rule-text'); const domain = el('div', 'rule-domain'), ip = el('div', 'rule-ip', rule.ip), server = serverFor(rule.ip), names = rule.www ? `${rule.domain} and www.${rule.domain}` : rule.domain;
+    domain.append(el('span', '', rule.domain)); if (rule.www) domain.append(el('span', 'www-chip', '+ WWW')); if (server) ip.append(el('span', 'srv', server.name));
+    text.append(domain, ip); row.append(text);
+    const toggle = el('button', 'toggle' + (rule.enabled ? ' on' : '')); toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-checked', String(rule.enabled)); toggle.setAttribute('aria-label', `Enable ${names}`); toggle.onclick = () => command('save-rules', state.rules.map((r, i) => i === index ? { ...r, enabled: !r.enabled } : r));
+    const edit = el('button', 'small', '✎'); edit.setAttribute('aria-label', `Edit ${rule.domain}`); edit.onclick = () => { editing = rule.domain; $('domain-input').value = rule.domain; $('ip-input').value = rule.ip; setWww(rule.www === true); ipNote(); $('save-rule').textContent = 'Save'; $('cancel-edit').hidden = false; $('domain-input').focus(); };
     const remove = el('button', 'small', '⌫'); remove.setAttribute('aria-label', `Remove ${rule.domain}`); remove.onclick = async () => { const result = await command('save-rules', state.rules.filter(r => r.domain !== rule.domain)); if (result.ok && editing === rule.domain) resetForm(); };
     row.append(toggle, edit, remove); $('rules').append(row);
   }
+  renderServers();
   }
   $('empty-rules').hidden = state.rules.length > 0; $('apply').disabled = !state.pending; $('pending').textContent = state.pending ? 'Domain or SSL changes saved. Restart to activate them.' : 'All saved domain rules are active.';
   $('apply').parentElement.classList.toggle('pending', state.pending);
@@ -90,13 +94,91 @@ function render(next) {
   $('open-release').hidden = !(manual && updating); if (manual) { $('download-update').hidden = true; $('install-update').hidden = true; }
   $('versions').textContent = `Dioptra ${state.versions.app} · Chromium ${state.versions.chromium} · Electron ${state.versions.electron}`;
 }
-function resetForm() { editing = null; $('rule-form').reset(); $('save-rule').textContent = 'Add'; $('cancel-edit').hidden = true; }
+function resetForm() { editing = null; $('rule-form').reset(); $('save-rule').textContent = 'Add'; $('cancel-edit').hidden = true; setWww(true); ipNote(); closeSuggestions(); }
+// www switch: the note names the second host name the rule will cover. core.cjs stores the rule under the bare domain.
+function wwwNote() {
+  const domain = $('domain-input').value.trim().replace(/\.$/, '').toLowerCase();
+  $('www-note').textContent = !www ? 'Only this exact name' : !domain ? 'Also sends the www name to this IP' : `Also sends ${domain.startsWith('www.') && domain.split('.').length > 2 ? domain.slice(4) : `www.${domain}`} to this IP`;
+}
+function setWww(on) { www = on; $('www-switch').classList.toggle('on', on); $('www-switch').setAttribute('aria-checked', String(on)); wwwNote(); }
+// Server list: imported in Settings, offered by name in the IP field.
+const serverFor = ip => state.servers.find(server => server.ip === ip);
+function ipNote() { const server = state && serverFor($('ip-input').value.trim()); $('ip-note').textContent = server ? `Server: ${server.name}` : 'IPv4 and IPv6'; }
+function renderServers() {
+  const servers = state.servers, any = servers.length > 0, pages = Math.max(1, Math.ceil(servers.length / SERVER_PAGE_SIZE));
+  serverPage = Math.min(serverPage, pages - 1);
+  const first = serverPage * SERVER_PAGE_SIZE, last = Math.min(first + SERVER_PAGE_SIZE, servers.length);
+  $('servers').replaceChildren(...servers.slice(first, last).map(server => { const row = el('div', 'server'); row.append(el('span', 'n', server.name), el('span', 'i', server.ip)); return row; }));
+  $('servers').classList.toggle('paged', pages > 1); $('servers').hidden = !any; $('server-pager').hidden = pages < 2; $('empty-servers').hidden = any; $('clear-servers').hidden = !any; $('server-tip').hidden = any;
+  $('server-range').textContent = `${first + 1} to ${last} of ${servers.length}`; $('server-page').textContent = `Page ${serverPage + 1} of ${pages}`;
+  $('server-prev').disabled = serverPage === 0; $('server-next').disabled = serverPage >= pages - 1;
+  $('server-status').textContent = serverNote || (any ? `${servers.length} server${servers.length === 1 ? '' : 's'}` : '');
+  $('ip-input').placeholder = any ? 'IP or server name' : '203.0.113.10';
+  ipNote();
+}
+// Suggestions: typing in the IP field shows at most MAX_SUGGESTIONS servers that match by name or IP address.
+const typedServer = () => $('ip-input').value.trim().toLowerCase();
+// Only decides what Enter does in the IP field; the address itself is validated in core.cjs.
+const completeIP = value => /^(\d{1,3}\.){3}\d{1,3}$/.test(value) || (/^[0-9a-f:.]+$/i.test(value) && value.split(':').length > 2);
+function markedName(name, query) {
+  const at = name.toLowerCase().indexOf(query), node = el('span', 'n');
+  if (at < 0) node.textContent = name; else node.append(name.slice(0, at), el('mark', '', name.slice(at, at + query.length)), name.slice(at + query.length));
+  return node;
+}
+function drawSuggestions() {
+  const box = $('ip-options'), input = $('ip-input'), query = typedServer();
+  box.hidden = !suggestions.length; input.setAttribute('aria-expanded', String(suggestions.length > 0));
+  if (suggestions.length) input.setAttribute('aria-activedescendant', `server-option-${activeSuggestion}`); else input.removeAttribute('aria-activedescendant');
+  box.replaceChildren(...suggestions.map((server, index) => {
+    const option = el('div', 'option' + (index === activeSuggestion ? ' active' : '')); option.id = `server-option-${index}`; option.setAttribute('role', 'option'); option.setAttribute('aria-selected', String(index === activeSuggestion));
+    option.append(markedName(server.name, query), el('span', 'i', server.ip));
+    option.onmousedown = event => { event.preventDefault(); chooseServer(server); };
+    return option;
+  }));
+  if (suggestionTotal > suggestions.length) box.append(el('div', 'more', `${suggestions.length} of ${suggestionTotal} servers. Keep typing to narrow down.`));
+}
+function suggestServers() {
+  const query = typedServer(), starts = server => server.name.toLowerCase().startsWith(query);
+  const found = query ? (state?.servers || []).filter(server => server.name.toLowerCase().includes(query) || server.ip.includes(query)) : [];
+  const ranked = [...found.filter(starts), ...found.filter(server => !starts(server))]; // names that start with the typed text first
+  suggestionTotal = ranked.length; suggestions = ranked.slice(0, MAX_SUGGESTIONS); activeSuggestion = 0; suggestionChosen = false; drawSuggestions();
+}
+function closeSuggestions() { suggestions = []; suggestionTotal = 0; drawSuggestions(); }
+function chooseServer(server) { $('ip-input').value = server.ip; closeSuggestions(); ipNote(); }
 $('rule-form').onsubmit = async event => {
-  event.preventDefault(); const existing = state.rules.find(r => r.domain === editing); const rule = { domain: $('domain-input').value, ip: $('ip-input').value, enabled: existing?.enabled ?? true };
+  event.preventDefault(); const existing = state.rules.find(r => r.domain === editing), typed = $('ip-input').value.trim();
+  const rule = { domain: $('domain-input').value, ip: state.servers.find(server => server.name.toLowerCase() === typed.toLowerCase())?.ip || typed, enabled: existing?.enabled ?? true, www };
   const rules = editing ? state.rules.map(r => r.domain === editing ? rule : r) : [...state.rules, rule];
   const result = await command('save-rules', rules); if (result.ok) resetForm();
 };
 $('cancel-edit').onclick = resetForm;
+$('www-row').onclick = () => setWww(!www);
+$('domain-input').oninput = wwwNote;
+$('ip-input').oninput = () => { suggestServers(); ipNote(); };
+$('ip-input').onfocus = suggestServers;
+$('ip-input').onblur = closeSuggestions;
+$('ip-input').onkeydown = event => {
+  if (event.key === 'Escape') return closeSuggestions();
+  if (!suggestions.length) return;
+  // Enter takes the highlighted server, unless a full address was typed and no server was picked with the arrows: then it submits as typed.
+  if (event.key === 'Enter' && (suggestionChosen || !completeIP(typedServer()))) { event.preventDefault(); return chooseServer(suggestions[activeSuggestion]); }
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+  event.preventDefault(); suggestionChosen = true; activeSuggestion = (activeSuggestion + (event.key === 'ArrowDown' ? 1 : suggestions.length - 1)) % suggestions.length; drawSuggestions();
+};
+$('servers').style.setProperty('--rows', SERVER_PAGE_SIZE);
+$('server-prev').onclick = () => { serverPage--; renderServers(); };
+$('server-next').onclick = () => { serverPage++; renderServers(); };
+$('import-servers').onclick = () => $('server-file').click();
+$('server-file').onchange = async event => {
+  const file = event.target.files[0]; event.target.value = '';
+  if (!file) return;
+  if (file.size > MAX_SERVER_CSV) return toast('This file is too large for a server list.');
+  let text; try { text = await file.text(); } catch { return toast('Could not read this file.'); }
+  const result = await command('import-servers', text);
+  if (result.ok) { serverPage = 0; serverNote = `${result.imported} server${result.imported === 1 ? '' : 's'} imported${result.skipped ? `, ${result.skipped} line${result.skipped === 1 ? '' : 's'} skipped` : ''}`; renderServers(); }
+};
+$('clear-servers').onclick = async () => { const result = await command('clear-servers'); if (result.ok) { serverPage = 0; serverNote = ''; renderServers(); } };
+setWww(true);
 $('navigation').onsubmit = event => { event.preventDefault(); const url = $('address').value; $('address').blur(); command('navigate', url); };
 $('new-tab').onclick = () => command('new-tab'); $('domains').onclick = () => command('panel', state.panel === 'domains' ? null : 'domains'); $('close-panel').onclick = () => command('panel', null);
 $('welcome-domains').onclick = async () => { await command('panel', 'domains'); $('domain-input').focus(); };

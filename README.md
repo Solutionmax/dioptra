@@ -78,9 +78,11 @@ Run it as a normal user. If FUSE is not available, add `--appimage-extract-and-r
 
 ### 1. Add a domain rule
 
-Open **Domains**, enter the domain and the IP address of the new server (IPv4 or IPv6), then choose **Apply and restart**. Rules match the exact domain name, so add `www` and other subdomains separately. You can switch rules on and off without deleting them.
+Open **Domains**, enter the domain and the IP address of the new server (IPv4 or IPv6), then choose **Apply and restart**. Leave **Include www** on to cover the `www` name with the same rule; add other subdomains separately. With a server list (**Settings**, **Servers**, **Import CSV**: a server name and an IP address on each line) you can type a server name in the IP field instead of its address. You can switch rules on and off without deleting them.
 
 ![Domains panel with three domain rules](docs/screenshots/domains.png)
+
+![Settings panel with an imported server list](docs/screenshots/servers.png)
 
 ### 2. Browse the new server
 

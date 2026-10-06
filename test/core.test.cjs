@@ -118,3 +118,33 @@ test('PTR query names for IPv4 and IPv6, nothing for non addresses', () => {
   assert.equal(ptrName('::1'), '1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa');
   assert.equal(ptrName('1.2.3.4, 5.6.7.8'), ''); assert.equal(ptrName('example.com'), ''); assert.equal(ptrName(''), '');
 });
+test('a www rule covers the bare name and the www name with one entry', () => {
+  const { expandRules } = require('../src/core.cjs');
+  const rules = validateRules([{ domain: 'WWW.Example.com', ip: '203.0.113.10', www: true }, { domain: 'shop.example.com', ip: '::1', enabled: false, www: true }, { domain: 'www.exact.nl', ip: '127.0.0.1' }]);
+  assert.deepEqual(rules, [{ domain: 'example.com', ip: '203.0.113.10', enabled: true, www: true }, { domain: 'shop.example.com', ip: '::1', enabled: false, www: true }, { domain: 'www.exact.nl', ip: '127.0.0.1', enabled: true }]);
+  assert.equal(resolverRules(rules), 'MAP example.com 203.0.113.10, MAP www.example.com 203.0.113.10, MAP www.exact.nl 127.0.0.1');
+  assert.deepEqual(expandRules(rules).map(r => `${r.domain} ${r.enabled}`), ['example.com true', 'www.example.com true', 'shop.example.com false', 'www.shop.example.com false', 'www.exact.nl true']);
+  assert.deepEqual(validateRules([{ domain: 'x.com', ip: '127.0.0.1', www: 'yes' }]), [{ domain: 'x.com', ip: '127.0.0.1', enabled: true }], 'only a real true switches www on');
+  assert.throws(() => validateRules([{ domain: 'x.com', ip: '127.0.0.1', www: true }, { domain: 'www.x.com', ip: '::1' }]), /www\.x\.com is already in the list/);
+  assert.throws(() => validateRules([{ domain: 'www.x.com', ip: '::1' }, { domain: 'x.com', ip: '127.0.0.1', www: true }]), /www\.x\.com is already in the list/);
+  assert.throws(() => validateRules([{ domain: `${'a'.repeat(61)}.${'b'.repeat(61)}.${'c'.repeat(61)}.${'d'.repeat(61)}.nl`, ip: '127.0.0.1', www: true }]), /Invalid domain name/, 'the www name must fit as well');
+});
+test('reads a server list from CSV and drops what is not a name with an IP address', () => {
+  const { parseServers, validServers } = require('../src/core.cjs');
+  assert.deepEqual(parseServers('﻿name;ip\r\nweb01.example.net;203.0.113.10\r\n"web02";"203.0.113.25"\r\n\r\n2001:db8::10\tnl-v6\nbroken line\nweb01.EXAMPLE.net,10.0.0.9\nport,127.0.0.1:80\nzone,fe80::1%eth0\n'), { servers: [{ name: 'web01.example.net', ip: '203.0.113.10' }, { name: 'web02', ip: '203.0.113.25' }, { name: 'nl-v6', ip: '2001:db8::10' }], skipped: 4 });
+  assert.deepEqual(parseServers('a,10.0.0.1\nb,10.0.0.2'), { servers: [{ name: 'a', ip: '10.0.0.1' }, { name: 'b', ip: '10.0.0.2' }], skipped: 0 }, 'no header needed');
+  assert.deepEqual(parseServers('name,ip\nnothing here'), { servers: [], skipped: 1 });
+  assert.deepEqual(parseServers(''), { servers: [], skipped: 0 });
+  assert.deepEqual(validServers([{ name: 'ok', ip: '10.0.0.1', extra: 1 }, { name: 'OK', ip: '10.0.0.2' }, { name: '', ip: '10.0.0.3' }, { name: 'x'.repeat(101), ip: '10.0.0.4' }, { name: 'bad\u0007', ip: '10.0.0.5' }, { name: 'noip', ip: 'web' }, null, 'text']), [{ name: 'ok', ip: '10.0.0.1' }]);
+  assert.deepEqual(validServers('nope'), []);
+  assert.equal(validServers(Array.from({ length: 2100 }, (_, i) => ({ name: `s${i}`, ip: '10.0.0.1' }))).length, 2000);
+});
+test('keeps the server list in the settings and survives a damaged one', () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dioptra-servers-')), 'settings.json');
+  assert.deepEqual(readSettings(file).servers, [], 'empty on a new profile');
+  saveSettings(file, { ...readSettings(file), servers: [{ name: 'web01', ip: '203.0.113.10' }], rules: [{ domain: 'x.com', ip: '203.0.113.10', enabled: true, www: true }] });
+  assert.deepEqual(readSettings(file).servers, [{ name: 'web01', ip: '203.0.113.10' }]);
+  assert.deepEqual(readSettings(file).rules, [{ domain: 'x.com', ip: '203.0.113.10', enabled: true, www: true }]);
+  fs.writeFileSync(file, JSON.stringify({ rules: [{ domain: 'x.com', ip: '127.0.0.1' }], servers: { broken: true } }));
+  assert.deepEqual(readSettings(file).servers, []); assert.equal(readSettings(file).rules.length, 1, 'rules still load');
+});
