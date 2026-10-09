@@ -1,5 +1,7 @@
 # Claude in Chrome compatibility experiment — 2026-09-29
 
+Historical experiment, not the current Dioptra support status. The stock-Electron failure below was superseded by Dioptra's compatibility bridge in 0.4.0. For the 1.0.0 integration, extension updates and test limits, see [technical notes](../technical-notes.md#claude-inside-dioptra-experimental) and [current verification](../verification.md#100--desktop-release).
+
 Hostlane 0.3.0 development source; Electron 44.4.5 / Chromium 152.0.7977.130; Linux x64 under the test-only root harness.
 
 Downloaded the original Chrome Web Store CRX for extension `fcoeoabgfenejglbffodgkkbkcdhcgfn` (Claude 1.0.94) using Google's extension-update endpoint. Extracted the original archive without modifying extension source, and loaded it into an isolated persistent Electron session with a temporary profile. Opened its original `sidepanel.html` in a sandboxed WebContents. No user account was used.

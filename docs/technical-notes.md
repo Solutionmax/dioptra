@@ -9,6 +9,8 @@ A migration browser for macOS, Windows and Linux, created by **SolutionMAX**. Ma
 - Apple Silicon: unzip `Dioptra-1.0.0-mac-arm64.zip`, then move Dioptra to Applications.
 - Intel Mac: use `Dioptra-1.0.0-mac-x64.zip`.
 - Linux x64: make `Dioptra-1.0.0-linux-x86_64.AppImage` executable and launch it as a normal user. If FUSE is unavailable, use `--appimage-extract-and-run` or install the Ubuntu/Debian amd64 `.deb`.
+- Ubuntu/Debian amd64: install `Dioptra-1.0.0-ubuntu-amd64.deb` with apt, then launch Dioptra as your normal user.
+- Windows x64: run `Dioptra-1.0.0-win-x64.exe`. The installer is unsigned; see the [installation instructions](../README.md#install).
 
 Mac releases use the persistent SolutionMAX signing identity for updates, but are not Apple Developer ID signed or notarized. If macOS blocks opening, use System Settings → Privacy & Security → Open Anyway after attempting to open it. Do not disable Gatekeeper globally. Linux desktop sandbox requirements depend on the distribution; do not run the browser as root.
 
@@ -50,7 +52,7 @@ The update screen supports HTTPS feeds, release information, download progress a
 
 The default feed is the public Solutionmax/dioptra GitHub release. See [release setup](updates.md). Private beta builds explicitly disable this feed; the v1.0.0 release enables it.
 
-The Linux AppImage update check and download/hash verification have been tested against a local HTTPS fixture. Installation is not yet end-to-end verified. macOS OTA uses the same SolutionMAX signing identity across releases. Apple notarization remains unavailable; initial manual installation can require Open Anyway.
+Real 0.7.6 → 1.0.0 update checks, downloads, installations and automatic relaunches passed for Linux AppImage, Mac arm64 and Windows x64 through isolated local feeds. Installed payloads match the release artifacts. macOS OTA retains the same SolutionMAX signing identity across releases. Apple notarization remains unavailable; initial manual installation can require Open Anyway. The Ubuntu/Debian package was installed with apt and tested on Ubuntu 24.04. See [verification](verification.md) for platform coverage, profile-preservation checks and test limits.
 
 ## Extensions
 
@@ -74,19 +76,21 @@ xvfb-run -a node test/update.cjs     # after Linux build
 
 The Linux root harness exists only in tests and is not packaged. Test profiles are temporary. Use `--profile-dir=/absolute/path` for an isolated manual test profile.
 
-Settings: `~/Library/Application Support/Migratiebrowser/settings.json` on macOS; `~/.config/Migratiebrowser/settings.json` on Linux. Corrupt settings are never silently overwritten.
+Settings: `~/Library/Application Support/Migratiebrowser/settings.json` on macOS; `~/.config/Migratiebrowser/settings.json` on Linux; `%APPDATA%\Migratiebrowser\settings.json` on Windows. Corrupt settings are never silently overwritten.
 
 ## What is still missing?
 
 See [the prioritized browser gap report](browser-gaps.md) for migration tools, everyday browsing features and remaining distribution work.
 
-## Claude inside Dioptra (experimental, 0.4.0)
+## Claude inside Dioptra (experimental)
 
-Click the **Claude icon → Install Claude**. Dioptra downloads the original extension from Google's HTTPS update service and verifies its CRX3 signature and publisher ID before extracting it into your profile. Sign in through the extension's **Log in** button; a paid Claude account is required. The Claude pane stays inside Dioptra. **Open Claude**, **Claude settings**, and **Remove Claude** are under **Settings → Claude**. The installed extension fills the sidebar without a second Dioptra header.
+Click the **Claude icon → Install Claude**. Dioptra downloads the original extension from Google's HTTPS update service and verifies its CRX3 signature and publisher ID before extracting it into your profile. Sign in through the extension's **Log in** button; availability is controlled by Anthropic. The Claude pane stays inside Dioptra. **Open Claude**, **Claude settings**, and **Remove Claude** are under **Settings → Claude**. The installed extension fills the sidebar without a second Dioptra header.
 
 The compatibility layer connects Claude's browser APIs to actual Dioptra tabs: tab queries, navigation, logical groups, script injection, debugger input, page reading and screenshots. Account traffic keeps certificate verification. Claude sign-in uses a separate persistent session with normal certificate checks, including third-party sign-in providers. Claude/Anthropic and common account-provider hosts are also always verified in browser tabs; other websites bypass certificate errors only when their matching enabled domain rule explicitly requests it.
 
-Verified with original Claude 1.0.94 on sandboxed macOS: online installation, original login UI and background worker, tab discovery, page reading/clicking/screenshots, native script injection, removal and isolated page privileges. A complete signed-in conversation and Claude-generated tool call still require an account test. This is experimental compatibility, not official Anthropic support. Separate browser windows and Claude Desktop/native-host pairing are not supported. Future extension versions may require compatibility changes.
+The original Claude 1.0.94 bridge tests cover the login UI and background worker, tab discovery, page reading/clicking/screenshots, native script injection, removal and isolated page privileges on sandboxed macOS. The 1.0.0 release also passed live updater tests with the official Claude 1.0.100 extension: verified installation, staging without replacement, explicit update, load-failure rollback, strict TLS, retained extension storage and unchanged website tabs. These are separate checks; a complete signed-in conversation and account-driven Claude tool call remain outside automated verification. This is experimental compatibility, not official Anthropic support. Separate browser windows and Claude Desktop/native-host pairing are not supported. Future extension versions may require compatibility changes.
+
+Under **Settings → Claude**, automatic checking only checks for newer versions; it never installs them. Choose **Check for updates**, then **Update Claude** when a newer version is available. Save any unfinished Claude draft before confirming: Claude reloads, while Dioptra and its website tabs stay open.
 
 Run `npm run test:claude` on a normal desktop user account to test an actual Web Store installation. For an existing unpacked official extension, set `CLAUDE_TEST_EXTENSION_DIR` to its directory. The Linux root harness only tests the bridge, because it disables the sandbox required by Electron service-worker preloads.
 
@@ -96,7 +100,7 @@ If Chrome and Dioptra show different Claude interfaces, use **Settings → Claud
 
 In 0.4.4, the hosted Claude panel receives the correct Chrome side-panel identity when contacting the original extension worker. The narrow bridge runs only in the sandboxed Claude view and its claude.ai child frame. Refreshing the hosted page preserves this connection.
 
-Version 0.4.5 aligns the extension worker and panel request identity for the Claude feature-configuration endpoint: missing official client platform/version headers are filled and the Electron/Dioptra user-agent suffixes are removed for that endpoint only. Authentication and feature response values remain owned by Claude. After upgrading, use **Refresh Claude** to discard the prior interface cache.
+Version 0.4.5 aligned the extension worker and panel request identity for the Claude feature-configuration endpoint: missing official client platform/version headers are filled and the Electron/Dioptra user-agent suffixes are removed for that endpoint only. Authentication and feature response values remain owned by Claude. Use **Troubleshooting → Reload Claude** to discard the prior interface cache.
 
 
 In 0.5.2, Claude can read and capture the Live pane in Compare. Opening Compare during a conversation keeps the new pane in that conversation's tab group. Live DOM execution uses an isolated world with the original extension's accessibility helper; cookies and DNS remain separate. Live script injection currently supports main-frame functions (including explicit MAIN-world functions), not extension files or subframe/document targeting. Normal Hostfile tabs retain Chromium's native injection behavior.

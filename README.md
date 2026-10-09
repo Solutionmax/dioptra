@@ -11,11 +11,13 @@
 A browser for website migrations: open any site on its new server before DNS changes, compare it with the live site, and spot what is different.</p>
 
 <p align="center">
-  <a href="../../releases/latest"><b>Download</b></a> ·
+  <a href="https://github.com/Solutionmax/dioptra/releases/latest"><b>Download</b></a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#install">Install</a> ·
   <a href="docs/technical-notes.md">Technical notes</a>
 </p>
+
+Screenshots show Dioptra **1.0.0** with a local demonstration website.
 
 ![Dioptra comparing the new server (Hostfile) with the live site side by side](docs/screenshots/compare.png)
 
@@ -36,15 +38,17 @@ Moving a website to a new server usually means editing `/etc/hosts`, flushing DN
 
 ## Download
 
-| Platform | File |
-| --- | --- |
-| macOS, Apple silicon (M1 and later) | `Dioptra-<version>-mac-arm64.zip` |
-| macOS, Intel | `Dioptra-<version>-mac-x64.zip` |
-| Windows 11 and 10, 64 bit | `Dioptra-<version>-win-x64.exe` |
-| Linux x86-64 | `Dioptra-<version>-linux-x86_64.AppImage` |
-| Ubuntu / Debian, amd64 | `Dioptra-<version>-ubuntu-amd64.deb` |
+Current release: [Dioptra v1.0.0](https://github.com/Solutionmax/dioptra/releases/tag/v1.0.0).
 
-Mac disk images (`.dmg`) are also available for both architectures. Get the files from the [latest release](../../releases/latest). Each release includes a `SHA256SUMS.txt` file.
+| Platform | Download |
+| --- | --- |
+| macOS, Apple Silicon (M1 and later) | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.0.0/Dioptra-1.0.0-mac-arm64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.0.0/Dioptra-1.0.0-mac-arm64.zip) |
+| macOS, Intel | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.0.0/Dioptra-1.0.0-mac-x64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.0.0/Dioptra-1.0.0-mac-x64.zip) |
+| Windows 11 and 10, 64 bit | [Installer](https://github.com/Solutionmax/dioptra/releases/download/v1.0.0/Dioptra-1.0.0-win-x64.exe) |
+| Linux x86-64 | [AppImage](https://github.com/Solutionmax/dioptra/releases/download/v1.0.0/Dioptra-1.0.0-linux-x86_64.AppImage) |
+| Ubuntu / Debian, amd64 | [.deb package](https://github.com/Solutionmax/dioptra/releases/download/v1.0.0/Dioptra-1.0.0-ubuntu-amd64.deb) |
+
+[SHA-256 checksums](https://github.com/Solutionmax/dioptra/releases/download/v1.0.0/SHA256SUMS.txt) · [Verification and platform coverage](docs/verification.md) · [All releases](https://github.com/Solutionmax/dioptra/releases)
 
 ## Install
 
@@ -91,7 +95,7 @@ Open **Dioptra** from your applications menu as your normal user. The package ma
 
 ### 1. Add a domain rule
 
-Open **Domains**, enter the domain and the IP address of the new server (IPv4 or IPv6), then choose **Add domain**. Changes apply immediately: affected pages reload, while Dioptra and your other tabs stay open. Leave **Include www** on to cover the `www` name with the same rule; add other subdomains separately. With a server list (**Settings**, **Servers**, **Import CSV**: a server name and an IP address on each line) you can type a server name in the IP field instead of its address. You can switch rules on and off without deleting them.
+Open **Domains**, enter the domain and the IP address of the new server (IPv4 or IPv6), then choose **Add**. Changes apply immediately: affected pages reload, while Dioptra and your other tabs stay open. Leave **Include www** on to cover the `www` name with the same rule; add other subdomains separately. With a server list (**Settings**, **Servers**, **Import CSV**: a server name and an IP address on each line) you can type a server name in the IP field instead of its address. You can switch rules on and off without deleting them.
 
 ![Domains panel with three domain rules](docs/screenshots/domains.png)
 
@@ -118,7 +122,7 @@ Four things in the window open a small card with details:
 
 ### 3. Compare with the live site
 
-Click **Compare**. The left pane is the new server through your rule, the right pane is the live site through normal DNS. Each pane has its own route bar and its own temporary cookies. Click a pane to use the address bar, back, forward and find in that pane.
+Click **Compare**. The left pane is the new server through your rule, the right pane is the live site through normal DNS. Each pane has its own route bar and isolated cookies. The new-server pane keeps its browser storage; Live uses temporary storage for the current app session. Click a pane to use the address bar, back, forward and find in that pane.
 
 To compare with a different address, use the URL field in the right pane bar, for example the copy of the site on a temporary test domain. **Same URL** puts the right pane back on the page of the left pane. Compare also works on a site without a domain rule: the right pane then asks which address to compare with. The right pane always uses normal DNS, so a site that is only reachable through a rule goes on the left. Differences is available when both panes are on the same site.
 
@@ -139,7 +143,7 @@ Click **Differences**. Dioptra downloads the page from both servers and compares
 - **Headers:** server software, PHP version, caching and security headers that differ.
 - **Findings:** a plain-language summary, with serious items in red, such as a script that loads only on the live site or inline code that looks obfuscated.
 
-Compare shows you whether both sides *look* the same. Differences shows what the servers actually *send*, so it also catches things you cannot see, like hidden malware or SEO spam.
+Compare shows you whether both sides *look* the same. Differences shows what the servers actually *send*. It can highlight unexpected scripts or injected markup worth investigating.
 
 Differences makes fresh anonymous document requests on both sides using Node's certificate trust store. A private CA trusted only by Chromium or the operating system may therefore work in a browser pane but fail in Differences. Hostfile applies the matching domain rule's Skip SSL choice; Live always verifies certificates and uses normal DNS. Neither side sends your saved cookies. Each reported IP belongs to the final document after redirects.
 
@@ -171,9 +175,11 @@ The footer shows the installed version. Dioptra checks for new releases at start
 
 ### Claude
 
-Click the Claude icon, choose **Install Claude**, and sign in with your Claude account (a paid plan is required by the extension). Dioptra downloads the official extension from Google's update service and verifies its signature before installing it. Claude can then work with your Dioptra tabs. This integration is experimental: Dioptra is not Google Chrome, and some Chrome features are not available. See [technical notes](docs/technical-notes.md) for details.
+Click the Claude icon, choose **Install Claude**, and sign in with your Claude account. Dioptra downloads the official extension from Google's update service and verifies its signature before installing it. Claude can then work with your Dioptra tabs. This integration is experimental: Dioptra is not Google Chrome, and some Chrome features are not available. See [technical notes](docs/technical-notes.md) for details.
 
 Manage the extension under **Settings → Claude**: check for a newer version, choose when to install it, or run a connection check. Automatic checking only notifies; it never installs an extension update by itself. Updating reloads Claude while the browser and website tabs stay open, so save an unfinished Claude draft first. Troubleshooting shows a readable summary, with technical details and copyable diagnostics underneath.
+
+![Claude settings with the official extension and installation action](docs/screenshots/claude-settings.png)
 
 ## Privacy and security
 
@@ -185,7 +191,7 @@ Manage the extension under **Settings → Claude**: check for a newer version, c
 
 ## Build from source
 
-Requires Node.js 22 or later.
+Requires Node.js 22.12 or later.
 
 ```sh
 npm ci

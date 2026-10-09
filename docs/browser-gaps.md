@@ -1,16 +1,18 @@
-# Dioptra: what is still missing?
+# Dioptra 1.0.0: remaining gaps
 
-Historical assessment of version 0.5.0. For current functionality and downloads, see the [README](../README.md). Several gaps below, including per-site reset, per-domain SSL and public updates, were subsequently implemented.
+Current as of 2026-10-09. Dioptra is a migration-testing browser, not a complete Chrome replacement. See the [README](../README.md) for supported features and [verification](verification.md) for tested platforms and limitations. The items below are remaining gaps, not promised release dates.
 
-Scope: a migration-testing browser, not a complete Chrome replacement. Reviewed against the current 0.5.0 source on 2026-09-29. These are recommendations, not features silently added to the release.
+## Available in 1.0.0
+
+Per-site storage reset, per-domain SSL exceptions, certificate inspection and public updates are implemented. Domain/IP and SSL changes apply immediately without restarting the app. Settings has six categories; Library supports search and download controls. Claude updates are checked and staged separately, then installed only on request with rollback on failure. Compare, Differences, DNS records, Site info, find, bookmarks and browsing history are available.
 
 ## Highest value for migration work
 
 | Missing capability | Why it matters |
 | --- | --- |
-| Import/export domain rules and named projects | Move mappings between computers, back them up and switch client projects quickly. |
-| Per-site storage reset | Current Clear cache preserves cookies, local storage and service workers; these can obscure migration tests. |
-| Per-domain certificate exceptions | 0.5.0 provides a global strict/bypass setting with restart. Individual-domain policies and detailed certificate inspection remain future work. |
+| Import/export domain rules | Move mappings between computers and keep backups. |
+| Named migration projects | Switch between client configurations without rebuilding the rule list. |
+| Per-project browsing isolation | Keep client cookies and website storage separate. The existing Live comparison session is separate, but is not a general project/profile manager. |
 
 ## Everyday browser features not implemented
 
@@ -19,16 +21,15 @@ Scope: a migration-testing browser, not a complete Chrome replacement. Reviewed 
 - Multiple named browser profiles, private windows and per-project cookie isolation.
 - Saved site-permission management and password/autofill management.
 - Browser-managed print/PDF controls and a broader accessibility/desktop acceptance pass.
-- Full Chrome extension compatibility. Since 0.4.0, Claude has an experimental installer and API bridge; the Claude interface is confirmed working since 0.4.5; complete Chrome-extension parity remains unverified. Other extensions are unsupported.
+- Full Chrome extension compatibility. Claude has an experimental installer and API bridge; other extensions, multiple browser windows and Claude Desktop/native-host pairing are unsupported. A complete signed-in Claude conversation remains outside automated verification.
 - Chrome sync, DRM streaming and screen sharing are not promised or verified.
 
 ## Release/distribution work
 
-- A default live update feed and real old-version → new-version installation tests.
-- Apple Developer ID signing/notarization and verified Mac OTA installation. Current Mac builds use ad-hoc signatures.
-- Real Linux desktop acceptance tests across target distributions; the development root harness is not a substitute.
+- Apple Developer ID signing/notarization and Windows code signing. Mac releases use the existing SolutionMAX signing identity; Windows installers are unsigned.
+- Broader native hardware/distribution coverage. Ubuntu 24.04 installation and ordinary-user tests pass, but FUSE mounting and physical GPU behavior were not tested. Intel Mac packages were exercised through Rosetta on Apple Silicon, not separate Intel hardware.
 - Further performance profiling with real customer websites. Recent changes reduce app overhead; there is no claim of universally faster page loads.
 
-Recommended next three: rule import/export + project sets, per-site storage reset, and detailed certificate inspection. These directly improve migration testing without turning Dioptra into a general-purpose browser project.
+Real 0.7.6 → 1.0.0 download, installation and relaunch tests passed for Linux AppImage, Mac arm64 and Windows x64 through isolated local feeds. Both Mac architectures, the Linux AppImage, Ubuntu/Debian amd64 package and Windows x64 installer have release verification coverage; see the detailed report for the exact tests.
 
-Implemented in 0.5.0: side-by-side Hostfile/Live with separate storage, observed IP banners, switchable SSL policy after restart, find, bookmarks, history, closed-tab reopening and downloads. Live uses normal OS DNS, not Dioptra overrides; its temporary session is not restored after app restart.
+Rule export/import, named projects and per-project browsing isolation are the main remaining migration-workflow gaps.
