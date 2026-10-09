@@ -1,4 +1,5 @@
 const { ipcMain, WebContentsView, Notification } = require('electron');
+const { FOOTER_HEIGHT } = require('./core.cjs');
 const ID = 'fcoeoabgfenejglbffodgkkbkcdhcgfn';
 const ORIGIN = `chrome-extension://${ID}`;
 const { readClaudeDiagnostics } = require('./claude-diagnostics.cjs');
@@ -122,7 +123,7 @@ function createClaude({ session, authSession, window, tabs, current, newTab, act
       const check = (event, next) => { if (next.startsWith(`https://${ID}.chromiumapp.org/`)) { event.preventDefault(); finish(null,next); } };
       wc.on('will-redirect',check); wc.on('will-navigate',check);
       wc.setWindowOpenHandler(() => ({ action: 'deny' }));
-      if (details.interactive) { window.contentView.addChildView(view); const [width,height] = window.getContentSize(); view.setBounds({ x: 0, y: 132, width, height: height - 162 }); }
+      if (details.interactive) { window.contentView.addChildView(view); const [width,height] = window.getContentSize(); view.setBounds({ x: 0, y: 132, width, height: height - 132 - FOOTER_HEIGHT }); }
       wc.loadURL(details.url).catch(e => { if (!finished && e.code !== 'ERR_ABORTED') finish(e); });
     })
   };

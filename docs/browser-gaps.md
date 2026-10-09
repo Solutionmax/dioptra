@@ -1,5 +1,7 @@
 # Dioptra: what is still missing?
 
+Historical assessment of version 0.5.0. For current functionality and downloads, see the [README](../README.md). Several gaps below, including per-site reset, per-domain SSL and public updates, were subsequently implemented.
+
 Scope: a migration-testing browser, not a complete Chrome replacement. Reviewed against the current 0.5.0 source on 2026-09-29. These are recommendations, not features silently added to the release.
 
 ## Highest value for migration work

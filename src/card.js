@@ -69,15 +69,47 @@ const cards = {
     return [head, list];
   },
   site(d) {
-    const head = el('div', 'card-head', 'What this site runs on'), list = el('dl');
-    head.append(el('span', 'card-sub', 'detected from this page'));
-    row(list, 'Platform', d.platform, d.version, d.platform && `from the ${d.source}`);
-    row(list, 'Shop', d.shop, d.shopVersion);
-    row(list, 'Theme', d.theme);
-    if (d.extras?.length) { const dd = el('dd', 'card-tags'); for (const name of d.extras) dd.append(el('span', '', name)); list.append(el('dt', '', 'Also found'), dd); }
-    if (d.php) row(list, 'PHP', ' ', d.php, 'from the X-Powered-By header');
-    row(list, 'Web server', d.server);
-    return [head, list];
+    const panes=d.panes, head=el('div','card-head','Connection & site comparison'), table=el('table','connection-comparison'), top=el('thead'), header=el('tr');
+    header.append(el('th','','Details'));
+    for(const p of panes) {const th=el('th'), badge=el('span','badge',p.route.label==='HOSTFILE'?'New server':'Live');th.className=p.route.label.toLowerCase();th.append(badge,el('small','',p.route.host||'New tab'));header.append(th);} top.append(header);table.append(top);
+    const body=el('tbody'), unknown='Not detected';
+    const add=(label,values,mark=false)=>{const tr=el('tr'), th=el('th','',label);th.scope='row';tr.append(th);values.forEach((value,i)=>{const td=el('td');td.append(value instanceof Node?value:el('span','',value||unknown));if(mark && values.length===2 && values[0] && values[1] && values[0]!==values[1])td.append(el('span','difference-mark','Different'));tr.append(td);});body.append(tr);};
+    add('Connected IP',panes.map(p=>p.startPage?'Ready to browse':p.connection?.fromCache?'Not measured · cached':p.loading||p.error?'Not measured':p.connection?.ip||'Not measured'));
+    add('Hostname (PTR)',panes.map(p=>!p.connection?.fromCache&&!p.loading&&!p.error?p.connection?.hostname||'Not measured':'Not measured'));
+    add('Type', panes.map((p, index) => {
+      const site = !p.loading && !p.error ? p.site || {} : {}, peer = panes[1-index];
+      const other = peer && !peer.loading && !peer.error ? peer.site || {} : {}, box = el('div');
+      const value = [site.platform,site.version].filter(Boolean).join(' ');
+      box.append(el('span','',value || unknown));
+      if (site.platform && other.platform && (site.platform !== other.platform || site.version && other.version && site.version !== other.version)) box.append(el('span','difference-mark','Different'));
+      const stack=el('div','site-stack');
+      for (const [label, key, versionKey] of [['Shop','shop','shopVersion'],['Builder','builder','builderVersion'],['Theme','theme',''],['Plugins','extras','']]) {
+        const name = key === 'extras' ? (site.extras || []).join(' · ') : site[key], peerName = key === 'extras' ? (other.extras || []).join(' · ') : other[key];
+        const line=el('span'); line.append(el('b','',label), name ? [name,site[versionKey]].filter(Boolean).join(' ') : unknown);
+        if (name && peerName && (name !== peerName || versionKey && site[versionKey] && other[versionKey] && site[versionKey] !== other[versionKey])) line.append(el('span','difference-mark','Different'));
+        stack.append(line);
+      }
+      box.append(stack); if(site.source) box.append(el('small','',`Detected from the ${site.source}`)); return box;
+    }));
+    add('PHP version',panes.map(p=>!p.loading&&!p.error?p.site?.php||'':''),true); add('Web server',panes.map(p=>!p.loading&&!p.error?p.site?.server||'':''),true);
+    add('SSL certificate',panes.map(p=>{const box=el('div'), cached=p.connection?.fromCache, cert=!p.loading&&!p.error&&!cached?p.route.certificate:null;let status=p.startPage||p.loading?'Certificate not measured':!p.url.startsWith('https:')?'No TLS':cached?'Certificate not rechecked':p.error?/CERT|SSL/i.test(p.error)?'Strict certificate error':'Certificate not measured':cert?.verified?'SSL valid':cert?.skipped?'SSL skipped':p.route.ssl==='SSL checks off'?'Verification skipped · not measured':'Certificate not measured';
+      const statusNode=el(cert?.verified?'a':'span',`ssl-chip ${cert?.verified?'strict':'skipped'}`,status);if(cert?.verified)statusNode.href=`https://card.invalid/cert/${p.id}`;box.append(statusNode);if(cert&&!cached&&!p.loading&&!p.error){box.append(' ',cert.issuer||'Issuer unavailable');if(cert.expires)box.append(el('small','',`Expires ${day(cert.expires)}${cert.validFrom?' · valid since '+day(cert.validFrom):''}`));}else if(cached)box.append(el('small','','No fresh certificate verification from cached HTML.'));return box;}));
+    add('Page source',panes.map(p=>{const box=el('div');box.append(el('span','',p.connection?.fromCache?'Browser cache':p.connection?'Network':'Not measured'));if(p.connection?.status)box.append(el('small','',`HTTP ${p.connection.status}${Number.isFinite(p.connection.ms)?' · '+Math.round(p.connection.ms)+' ms':''}`));return box;}));
+    table.append(body);return [head,table,el('p','comparison-note','Detected details, side by side. Unknown values have not been observed. Orange marks different detected versions. Click a verified certificate for its original detail card.')];
+  },
+  cache(d) {
+    const link=el('a','mem-btn','Reload without browser cache');link.href=`https://card.invalid/hard-reload/${d.id}`;
+    return [el('div','card-head','Browser cache'),el('p','card-copy','This page was served from the browser cache. No fresh connection IP, PTR lookup or certificate verification is available. Reload without cache to measure the current server.'),link];
+  },
+  'cache-menu'() {
+    const actions=el('div','card-actions');for(const [action,label] of [['clear-cache','Clear cache & reload both panes'],['hard-reload','Reload active pane without cache'],['clear-site-data','Clear site data…']]){const a=el('a','mem-btn',label);a.href=`https://card.invalid/${action}/0`;actions.append(a);}
+    return [el('div','card-head','Clear cache'),el('p','card-copy','Clear browser and DNS cache, then reload the visible pages. Cookies and sign-ins are kept. Clear site data removes cookies and storage for the active site.'),actions];
+  },
+  tools(d) {
+    const actions=el('div','card-actions');for(const [action,label] of [['devtools',d.open?'Close Developer Tools':'Open Developer Tools'],['dock-bottom','Dock below'],['dock-left','Dock left'],['dock-right','Dock right']]){const a=el('a','mem-btn',label);a.href=`https://card.invalid/${action}/0`;actions.append(a);}return [el('div','card-head','Developer Tools'),el('p','card-copy','Inspect the active website. F12 toggles the inspector. Drag its border to resize.'),actions];
+  },
+  about(d) {
+    const actions=el('div','card-actions maker-links');for(const [action,label] of [['maker-website','SolutionMAX'],['maker-github','GitHub'],['maker-coffee','Buy me a coffee']]){const a=el('a','mem-btn',label);a.href=`https://card.invalid/${action}/0`;if(action==='maker-coffee')a.className+=' coffee';actions.append(a);}return [el('div','card-head',`Dioptra ${d.version}`),el('p','card-copy','Same domain. Different server. Created by SolutionMAX.'),actions];
   },
   dns(d) {
     const head = el('div', 'card-head dns-head', 'DNS records'), refresh = el('a', 'mem-btn', 'Refresh'), foot = el('div', 'mem-foot dns-foot');
@@ -107,7 +139,7 @@ const cards = {
     return [...parts, foot];
   },
   memory(d) {
-    const head = el('div', 'card-head', 'Memory'); head.append(el('span', 'mono', size(d.total)));
+    const head = el('div', 'card-head', 'Memory'), summary=el('div','memory-summary'), amount=el('div');amount.append(el('small','','TOTAL DIOPTRA'),el('strong','',size(d.total)));summary.append(amount,el('small','',`${d.tabs} tabs · ${d.processes} processes`));
     const top = Math.max(1, ...d.rows.map(r => r.kb), d.claude, d.rest);
     const line = (label, title, kb, className, href) => {
       const item = el(href ? 'a' : 'div', `mem-row ${className}`), name = el('span', 'mem-title');
@@ -125,7 +157,7 @@ const cards = {
     system.append(line('', 'Dioptra itself (window, graphics, network)', d.rest, 'sys'));
     const foot = el('div', 'mem-foot'); foot.append(el('span', '', `${d.tabs} ${d.tabs === 1 ? 'tab' : 'tabs'} · ${d.processes} processes · updates every 5 s`));
     if (d.rows[0]) { const reload = el('a', 'mem-btn', 'Reload heaviest tab'); reload.href = `https://card.invalid/reload/${d.rows[0].id}`; foot.append(reload); }
-    return [head, tabs, system, foot];
+    return [head, summary, el('div','memory-section','WEBSITE PROCESS GROUPS'), tabs, system, foot];
   }
 };
 // eslint-disable-next-line no-unused-vars

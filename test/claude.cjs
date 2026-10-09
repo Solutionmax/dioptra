@@ -18,22 +18,24 @@ const {execFileSync} = require('node:child_process');
   const server = http.createServer((_req,res) => { res.setHeader('Content-Type','text/html'); res.end('<!doctype html><title>Claude test page</title><h1>Dioptra control test</h1><input aria-label="Message"><button onclick="document.querySelector(\'h1\').textContent=\'Clicked by Claude bridge\'">Test button</button>'); });
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
   const url = `http://localhost:${server.address().port}/`;
-  await fs.writeFile(path.join(profile,'settings.json'),JSON.stringify({rules:[{domain:'localhost',ip:'127.0.0.1',enabled:true}],tabs:['about:blank']}));
+  await fs.writeFile(path.join(profile,'settings.json'),JSON.stringify({rules:[{domain:'localhost',ip:'127.0.0.1',enabled:true}],tabs:['about:blank'],claudeAutoCheck:false}));
   const root = process.platform === 'linux' && process.getuid() === 0;
   let app;
   try {
-    app = await electron.launch({...(process.env.CLAUDE_TEST_EXECUTABLE ? {executablePath:process.env.CLAUDE_TEST_EXECUTABLE} : {}),cwd:path.join(__dirname,'..'),args:[...(root ? ['--no-sandbox','-r',path.join(__dirname,'root-harness.cjs')] : []),...(process.env.CLAUDE_TEST_EXECUTABLE ? [] : ['.']),`--profile-dir=${profile}`],env:{...process.env,ELECTRON_ENABLE_LOGGING:'1'}});
+    app = await electron.launch({chromiumSandbox:!root,...(process.env.CLAUDE_TEST_EXECUTABLE ? {executablePath:process.env.CLAUDE_TEST_EXECUTABLE} : {}),cwd:path.join(__dirname,'..'),args:[...(root ? ['--no-sandbox','-r',path.join(__dirname,'root-harness.cjs')] : []),...(process.env.CLAUDE_TEST_EXECUTABLE ? [] : ['.']),`--profile-dir=${profile}`],env:{...process.env,ELECTRON_ENABLE_LOGGING:'1'}});
+    assert.equal(await app.evaluate(()=>process.argv.includes('--no-sandbox')),root,'only the explicit Linux root harness disables the native sandbox');
     const ui = await app.firstWindow();
     await ui.getByRole('button',{name:'Claude',exact:true}).waitFor();
     if (fixture) await poll(()=>ui.evaluate(async()=> (await window.browser.command('state')).state.claude.status),'ready');
     await ui.getByRole('button',{name:'Claude',exact:true}).click();
-    if (!fixture) { await ui.getByRole('button',{name:'Install Claude',exact:true}).click(); await poll(()=>ui.evaluate(async()=> (await window.browser.command('state')).state.claude.status),'ready',90000); }
+    if (!fixture) { await ui.getByRole('button',{name:'Install Claude',exact:true}).click(); await ui.locator('#claude-panel-install-yes').click(); await poll(()=>ui.evaluate(async()=> (await window.browser.command('state')).state.claude.status),'ready',90000); }
+    const extensionVersion = JSON.parse(await fs.readFile(path.join(profile,'claude-extension','manifest.json'),'utf8')).version;
     await poll(()=>app.evaluate(({webContents})=>webContents.getAllWebContents().some(w=>w.getURL().includes('/sidepanel.html'))),true);
     await ui.locator('body.claude-open #panel').waitFor({state:'visible'});
     assert.equal(await ui.locator('#panel .panel-head').isVisible(),false,'Installed Claude has no extra Dioptra header');
     const geometry = await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0];const view=win.contentView.children.find(v=>v.webContents?.getURL().includes('/sidepanel.html'));return {bounds:view.getBounds(),height:win.getContentSize()[1]};});
-    assert.equal(geometry.bounds.y,132,'Claude begins directly below the browser toolbar');
-    assert.equal(geometry.bounds.height,geometry.height-162,'Claude fills the pane to the browser footer');
+    assert.equal(geometry.bounds.y,144,'Claude begins directly below the browser toolbar');
+    assert.equal(geometry.bounds.height,geometry.height-186,'Claude fills the pane to the browser footer');
     const run = script => app.evaluate(async({webContents},code)=>webContents.getAllWebContents().find(w=>w.getURL().includes('/sidepanel.html')).executeJavaScript(code),script);
     // Observe the actual Chromium request, using no account credentials. The
     // server can reject it; only the public client identity is under test.
@@ -47,7 +49,7 @@ const {execFileSync} = require('node:child_process');
     await run(`fetch('https://api.anthropic.com/api/bootstrap/features/claude_in_chrome',{headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(10000)}).then(()=>null,()=>null)`);
     const client = await app.evaluate(()=>globalThis.claudeRequestIdentity);
     assert.equal(client?.platform,'claude_browser_extension');
-    assert.equal(client.version,'1.0.94');
+    assert.equal(client.version,extensionVersion);
     assert.match(client.agent,/Chrome\/[\d.]+/);
     assert.doesNotMatch(client.agent,/Dioptra\/|Electron\//);
     await app.evaluate(({session})=>session.fromPartition('persist:web').webRequest.onSendHeaders(null));
@@ -195,7 +197,7 @@ const {execFileSync} = require('node:child_process');
       for (const name of ['persist:web','persist:claude-auth']) { try { await session.fromPartition(name).fetch(url); results.push('accepted'); } catch { results.push('rejected'); } }
       return results;
     },`https://127.0.0.1:${tlsServer.address().port}/`);
-    assert.deepEqual(tls,['accepted','rejected'],'Migration TLS bypass stays separate from strict OAuth TLS');
+    assert.deepEqual(tls,['rejected','rejected'],'Background session.fetch without a website WebContents stays strict in website and OAuth sessions');
     if (!root) {
       await run(`[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Log in').click()`);
       await poll(()=>app.evaluate(({webContents,session})=>webContents.getAllWebContents().some(w=>w.session===session.fromPartition('persist:claude-auth'))),true);
@@ -208,21 +210,27 @@ const {execFileSync} = require('node:child_process');
     }
     await ui.getByRole('button',{name:'Settings',exact:true}).click();
     assert.equal(await ui.locator('#panel .panel-head').isVisible(),true,'Settings keeps its normal panel header');
-    await ui.getByRole('button',{name:'Check Claude',exact:true}).waitFor({timeout:2000});
+    await ui.locator('#settings-menu [data-settings-category="claude"]').click();
+    await ui.locator('#claude-troubleshooting > summary').click();
+    await ui.locator('#claude-check').waitFor({timeout:2000});
     await run(`chrome.storage.local.set({features:{timestamp:Date.now(),payload:{features:{chrome_ext_cowork_iframe:{on:false,value:false},privateTest:{value:'must-not-leak'}}}}})`);
-    await ui.getByRole('button',{name:'Check Claude',exact:true}).click();
-    await poll(()=>ui.locator('#claude-diagnostics').innerText().then(t=>t.includes('"newInterfaceEnabled": false')),true);
-    const diagnostics = JSON.parse(await ui.locator('#claude-diagnostics').innerText());
-    assert.equal(diagnostics.extensionVersion,'1.0.94');
+    await ui.locator('#claude-check').click();
+    await poll(()=>ui.locator('#claude-diagnostics').textContent().then(t=>t.includes('"newInterfaceEnabled": false')),true);
+    const diagnostics = JSON.parse(await ui.locator('#claude-diagnostics').textContent());
+    assert.equal(diagnostics.extensionVersion,extensionVersion);
     assert.equal(JSON.stringify(diagnostics).includes('must-not-leak'),false,'Diagnostics never dump the feature payload');
-    await ui.getByRole('button',{name:'Copy Claude diagnostics',exact:true}).click();
+    await ui.locator('#claude-report details > summary').click();
+    await ui.locator('#claude-copy-diagnostics').click();
     assert.deepEqual(JSON.parse(await app.evaluate(({clipboard})=>clipboard.readText())),diagnostics);
     await run(`chrome.storage.local.set({dioptraTestPreference:'keep-me'})`);
-    await ui.getByRole('button',{name:'Refresh Claude',exact:true}).click();
+    await ui.locator('#claude-refresh').click();
+    await ui.locator('#claude-reload-yes').click();
     await poll(()=>run(`chrome.storage.local.get('dioptraTestPreference').then(v=>v.dioptraTestPreference)`),'keep-me');
     await poll(()=>ui.evaluate(async()=> (await window.browser.command('state')).state.panel),'claude');
     await ui.getByRole('button',{name:'Settings',exact:true}).click();
-    await ui.getByRole('button',{name:'Remove Claude',exact:true}).click();
+    await ui.locator('#settings-menu [data-settings-category="claude"]').click();
+    await ui.locator('#remove-claude').click();
+    await ui.locator('#claude-remove-yes').click();
     await ui.getByRole('button',{name:'Claude',exact:true}).click();
     await ui.getByRole('button',{name:'Install Claude',exact:true}).waitFor();
     assert.equal(await app.evaluate(({session})=>session.fromPartition('persist:web').extensions.getAllExtensions().length),0);

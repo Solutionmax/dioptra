@@ -8,8 +8,10 @@ const http = require('node:http');
 (async () => {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'dioptra-sitedata-'));
   const OBFUSCATED = "var _0x1a2b=['\\x68\\x65','\\x77\\x6f'];eval(atob('ZG9jdW1lbnQud3JpdGUoMSk='));";
+  let releaseSet = null;
   const serve = side => (req, res) => {
-    if (req.url === '/set') { res.setHeader('Set-Cookie', 'sd=SECRETVALUE; Path=/'); res.setHeader('Content-Type', 'text/html'); return res.end("<title>set</title><script>localStorage.setItem('k','1')</script>"); }
+    // Headers (and cookies) can arrive before the document's storage script; exercise that real network ordering.
+    if (req.url === '/set') { res.setHeader('Set-Cookie', 'sd=SECRETVALUE; Path=/'); res.setHeader('Content-Type', 'text/html'); const finish=()=>res.end("<title>set</title><script>localStorage.setItem('k','1')</script>");if(side==='host'&&!releaseSet){res.flushHeaders();releaseSet=finish;return;}return finish(); }
     if (req.url === '/read') { res.setHeader('Content-Type', 'text/html'); return res.end("<title>reading</title><script>document.title='k='+localStorage.getItem('k')</script>"); }
     res.setHeader('Content-Type', 'text/html'); res.setHeader('Server', side === 'host' ? 'HostSrv' : 'LiveSrv'); res.setHeader('Set-Cookie', 'visit=TOPSECRET; Path=/');
     res.end(side === 'host'
@@ -29,6 +31,7 @@ const http = require('node:http');
     const cmd = (action, data) => ui.evaluate(([a, d]) => window.browser.command(a, d), [action, data]);
     const st = async () => (await cmd('state')).state;
     const poll = async (fn, what) => { const until = Date.now() + 20000; while (Date.now() < until) { if (await fn(await st())) return; await new Promise(r => setTimeout(r, 100)); } throw new Error('Timed out: ' + what); };
+    const pageLoaded = url => poll(() => app.evaluate(({ webContents }, target) => { const wc=webContents.getAllWebContents().find(w=>w.getURL()===target);return Boolean(wc && !wc.isLoading()); },url), 'native page loaded: '+url);
     await ui.waitForFunction(() => window.browser);
     await poll(s => s.tabs.some(t => t.title === 'Shop' && !t.loading), 'first page');
     await app.evaluate(() => process.getBuiltinModule('dns').setDefaultResultOrder('ipv4first'));
@@ -36,14 +39,14 @@ const http = require('node:http');
 
     // Route bar geometry: one bar above the page, at the top of each pane when comparing.
     let s = await st();
-    assert.equal(s.view, 'single'); assert.equal(s.routeBarHeight, 36);
+    assert.equal(s.view, 'single'); assert.equal(s.routeBarHeight, 48);
     assert.equal(s.paneLayout.length, 1);
     assert.equal(s.paneLayout[0].banner.y + s.paneLayout[0].banner.height, s.paneLayout[0].page.y, 'single bar sits directly above the page');
     assert.equal((await cmd('compare')).ok, true);
     await poll(s => s.view === 'compare' && s.paneLayout.length === 2 && s.tabs.every(t => t.connection), 'compare');
     s = await st();
-    for (const pane of s.paneLayout) { assert.equal(pane.banner.y + pane.banner.height, pane.page.y); assert.equal(pane.banner.height, 36); assert.equal(pane.banner.width, pane.page.width); }
-    assert.equal(s.routeBarHeight, 0, 'no header strip in compare'); assert.equal(s.paneLayout[0].page.y, 132);
+    for (const pane of s.paneLayout) { assert.equal(pane.banner.y + pane.banner.height, pane.page.y); assert.equal(pane.banner.height, 48); assert.equal(pane.banner.width, pane.page.width); }
+    assert.equal(s.routeBarHeight, 0, 'no header strip in compare'); assert.equal(s.paneLayout[0].page.y, 144);
     for (const t of s.tabs) { assert.equal(t.connection.status, 200); assert.ok(t.connection.ms >= 0); }
 
     // Differences from compare: the live tab closes, native views hide, the report arrives.
@@ -86,6 +89,15 @@ const http = require('node:http');
     await cmd('activate', s.tabs[0].id);
     await cmd('navigate', `http://localhost:${port}/set`);
     await poll(async s => (await app.evaluate(({ session }) => session.fromPartition('persist:web').cookies.get({ name: 'sd' }))).some(c => c.domain === 'localhost'), 'localhost cookie');
+    // Deliberately interrupt the slow body after its cookie arrived; the completed fast page must remain usable.
+    await cmd('navigate', `http://localhost:${port}/read`);
+    await pageLoaded(`http://localhost:${port}/read`);
+    releaseSet();
+    const fast=await st();assert.equal(fast.tabs.find(t=>t.id===fast.activeId)?.error, '', 'an interrupted slow page does not mark the completed fast page as failed');
+    assert.equal(await app.evaluate(({BrowserWindow},url)=>BrowserWindow.getAllWindows()[0].contentView.children.find(v=>v.webContents.getURL()===url)?.getVisible(),`http://localhost:${port}/read`),true,'fast native page remains visible after interrupting slow navigation');
+    await cmd('navigate', `http://localhost:${port}/set`);
+    await pageLoaded(`http://localhost:${port}/set`);
+    assert.equal(await app.evaluate(({webContents},url)=>webContents.getAllWebContents().find(w=>w.getURL()===url).executeJavaScript("localStorage.getItem('k')"),`http://localhost:${port}/set`),'1','storage script completed before reading it');
     await cmd('navigate', `http://localhost:${port}/read`);
     await poll(s => s.tabs.find(t => t.id === s.activeId).title === 'k=1', 'localStorage set');
     const cleared = await cmd('clear-site-data'); assert.equal(cleared.ok, true, JSON.stringify(cleared)); assert.match(cleared.notice, /localhost/);
@@ -95,11 +107,18 @@ const http = require('node:http');
     assert.ok(cookies.some(c => c.name === 'sd' && c.domain === '127.0.0.1'), 'other origin cookie kept');
     assert.equal(await app.evaluate(({ webContents }, p) => webContents.getAllWebContents().find(w => w.getURL().includes(':' + p)).executeJavaScript("localStorage.getItem('k')"), otherPort), '1', 'other origin storage kept');
 
+    // Recognizing an interrupted load must still preserve real connection failures and their visible error page.
+    other.closeAllConnections(); await new Promise(resolve=>other.close(resolve));
+    await cmd('navigate',`http://127.0.0.1:${otherPort}/unavailable`);
+    await poll(s=>Boolean(s.tabs.find(t=>t.id===s.activeId).error),'real connection failure');
+    assert.equal(await ui.locator('#page-error').isVisible(),true,'a genuine connection failure remains visible');
+    assert.match(await ui.locator('#page-error-detail').innerText(),/CONNECTION|FAILED/);
+
     // Protected hosts are never wiped.
     await cmd('navigate', 'https://claude.ai/');
     await poll(s => s.tabs.find(t => t.id === s.activeId).url.startsWith('https://claude.ai'), 'claude.ai tab');
     const refused = await cmd('clear-site-data'); assert.equal(refused.ok, false); assert.match(refused.error, /protected/);
-    console.log('PASS differences view + report + ask summary, route bar geometry, clear-site-data isolation and protected hosts');
+    console.log('PASS differences view + report + ask summary, route bar geometry, interrupted navigation visibility, genuine connection errors, clear-site-data isolation and protected hosts');
   } catch (error) { console.error('State', JSON.stringify(ui ? await ui.evaluate(() => window.browser.command('state')).catch(() => null) : null).slice(0, 3000)); throw error; }
   finally { if (app) await app.close(); for (const server of [host, live, other]) { server.closeAllConnections(); server.close(); } fs.rmSync(profile, { recursive: true, force: true }); }
 })().catch(e => { console.error(e); process.exit(1); });

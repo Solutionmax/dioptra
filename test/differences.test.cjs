@@ -135,3 +135,53 @@ test('summaryText fences server data and strips hidden characters', () => {
   assert.ok(text.indexOf('ignore previous') < text.indexOf('END UNTRUSTED SERVER DATA'));
   assert.doesNotMatch(text, /‮/);
 });
+
+test('mapped Differences fetch keeps Host/SNI, scopes TLS per redirect and never sends cookies', async () => {
+  const https=require('node:https'),http=require('node:http'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{execFileSync}=require('node:child_process');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dioptra-diff-tls-'));execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',dir+'/key','-out',dir+'/cert','-days','1','-subj','/CN=mapped.invalid'],{stdio:'ignore'});
+  let skipSSL=true;const seen=[];
+  const server=https.createServer({key:fs.readFileSync(dir+'/key'),cert:fs.readFileSync(dir+'/cert')},(req,res)=>{
+    seen.push({host:req.headers.host,sni:req.socket.servername,cookie:req.headers.cookie});
+    if(req.url==='/redirect'){res.writeHead(302,{location:'/page'});return res.end()}
+    if(req.url==='/external'){res.writeHead(302,{location:`https://strict.invalid:${server.address().port}/`});return res.end()}
+    if(req.url==='/slow')return;
+    if(req.url==='/big')return res.end('x'.repeat(6*1024*1024));
+    res.end('<p>mapped</p>');
+  });await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port;
+  const resolveRoute=host=>({ip:'127.0.0.1',skipSSL:host==='mapped.invalid'&&skipSSL});
+  const fetch=url=>d.fetchDocument({fetch:global.fetch},`https://mapped.invalid:${port}${url}`,{resolveRoute});
+  try{
+    let result=await fetch('/redirect');assert.equal(result.ok,true,result.error);assert.equal(result.body,'<p>mapped</p>');assert.equal(result.ip,'127.0.0.1');assert.equal(result.redirects.length,1);
+    assert.deepEqual(seen[0],{host:`mapped.invalid:${port}`,sni:'mapped.invalid',cookie:undefined});
+    result=await fetch('/external');assert.equal(result.ok,false,'redirected strict host must not inherit bypass');
+    skipSSL=false;assert.equal((await fetch('/')).ok,false,'policy revocation applies without cached TLS acceptance');
+    skipSSL=true;assert.equal((await fetch('/')).ok,true);
+    assert.equal((await fetch('/big')).body.length,5*1024*1024);
+    assert.equal((await d.fetchDocument({fetch:global.fetch},`https://mapped.invalid:${port}/slow`,{resolveRoute,timeout:30})).ok,false);
+  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true,force:true})}
+});
+
+test('anonymous Differences rejects credentials on redirect hops before sending Authorization', async () => {
+  const http = require('node:http'), seen = [];
+  const server = http.createServer((req, res) => {
+    seen.push({ path: req.url, authorization: req.headers.authorization });
+    if (req.url === '/start') res.writeHead(302, { location: '/middle' });
+    else if (req.url === '/middle') res.writeHead(302, { location: `http://user:secret@mapped.invalid:${server.address().port}/target` });
+    res.end('anonymous');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://mapped.invalid:${server.address().port}`;
+  const options = { resolveRoute: () => ({ ip: '127.0.0.1', skipSSL: false }) };
+  try {
+    const result = await d.fetchDocument({ fetch: global.fetch }, `${origin}/start`, options);
+    assert.equal(result.ok, false, `credential redirect must be rejected; requests: ${JSON.stringify(seen)}`);
+    assert.match(result.error, /credentials/i);
+    assert.deepEqual(seen.map(request => request.path), ['/start', '/middle'], 'credential-bearing target is never requested');
+    assert.ok(seen.every(request => request.authorization === undefined), 'anonymous redirects never send Authorization');
+    const initial = await d.fetchDocument({ fetch: global.fetch }, origin.replace('http://', 'http://user:secret@'), options);
+    assert.equal(initial.ok, false, 'direct helper use also rejects URL credentials');
+    assert.equal(seen.length, 2, 'no credential-bearing initial request was sent');
+  } finally {
+    server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+  }
+});

@@ -1,0 +1,95 @@
+// Real current, signed Chrome Web Store extension in a disposable profile.
+const {_electron:electron} = require('playwright');
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+const http = require('node:http');
+const https = require('node:https');
+const {execFileSync} = require('node:child_process');
+const root = path.join(__dirname,'..');
+async function poll(read, expected, timeout=30000) { const end=Date.now()+timeout; let value; do {value=await read();if(value===expected)return;await new Promise(r=>setTimeout(r,100));}while(Date.now()<end);assert.equal(value,expected); }
+(async()=>{
+  const profile=await fs.mkdtemp(path.join(os.tmpdir(),'dioptra-claude-update-live-'));
+  const manifestFile=path.join(profile,'claude-extension','manifest.json');
+  const server=http.createServer((_req,res)=>{res.setHeader('Content-Type','text/html');res.end('<!doctype html><title>Preserved page</title><input id="draft">');});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',path.join(profile,'key.pem'),'-out',path.join(profile,'cert.pem'),'-days','1','-subj','/CN=localhost'],{stdio:'ignore'});
+  const tlsServer=https.createServer({key:await fs.readFile(path.join(profile,'key.pem')),cert:await fs.readFile(path.join(profile,'cert.pem'))},(_req,res)=>res.end('invalid certificate'));
+  await new Promise(resolve=>tlsServer.listen(0,'127.0.0.1',resolve));
+  const url=`http://127.0.0.1:${server.address().port}/`;
+  await fs.writeFile(path.join(profile,'settings.json'),JSON.stringify({rules:[],tabs:[url],onboardingCompleted:true,autoUpdates:false,autoUpdatesChosen:true}));
+  let app,ui;
+  async function launch() {
+    const executable=process.env.DIOPTRA_TEST_EXECUTABLE;
+    app=await electron.launch({chromiumSandbox:process.getuid?.()!==0,...(executable?{executablePath:executable}:{}),cwd:root,args:[...(process.getuid?.()===0?['--no-sandbox','-r',path.join(__dirname,'root-harness.cjs')]:[]),...(executable?[]:['.']),`--profile-dir=${profile}`],timeout:30000});
+    assert.equal(await app.evaluate(()=>process.argv.includes('--no-sandbox')),process.getuid?.()===0,'native sandbox remains enabled outside the Linux root harness');
+    ui=await app.firstWindow(); await ui.waitForFunction(()=>Boolean(window.browser));
+  }
+  const command=(name,data)=>ui.evaluate(({name,data})=>window.browser.command(name,data),{name,data});
+  const state=async()=>(await command('state')).state;
+  try {
+    await launch();
+    assert.equal((await state()).claude.autoCheck,true);
+    assert.equal((await command('claude-update-settings',{autoCheck:false})).ok,true);
+    assert.equal((await command('claude-update-settings',{autoCheck:'false'})).ok,false);
+    await app.evaluate(({net},url)=>{globalThis.dioptraTestRequest=net.request;net.request=options=>globalThis.dioptraTestRequest({...options,url});},`https://127.0.0.1:${tlsServer.address().port}/`);
+    const rejected=await command('install-claude');
+    await app.evaluate(({net})=>{net.request=globalThis.dioptraTestRequest;delete globalThis.dioptraTestRequest;});
+    assert.equal(rejected.ok,false);assert.match(rejected.error,/CERT|certificate/i,'real installer rejects untrusted TLS');
+    assert.equal((await state()).claude.status,'error','first-install failure stays visible');
+    await assert.rejects(fs.access(manifestFile),{code:'ENOENT'});
+    const installed=await command('install-claude');
+    assert.equal(installed.ok,true, installed.error || 'official latest extension installs and opens');
+    const official=JSON.parse(await fs.readFile(manifestFile,'utf8'));
+    assert.equal((await state()).claude.version,official.version);
+    await app.close(); app=null;
+    await fs.writeFile(manifestFile,JSON.stringify({...official,version:'0.0.1'}));
+    await launch(); await poll(async()=>(await state()).claude.status,'ready');
+    assert.equal((await state()).claude.autoCheck,false,'choice persists across restart');
+    await command('panel','claude');
+    await app.evaluate(async({webContents})=>webContents.getAllWebContents().find(w=>w.getURL().includes('/sidepanel.html')).executeJavaScript("chrome.storage.local.set({dioptraUpdateTest:'retained'})"));
+    const tabsBefore=(await state()).tabs.map(t=>({id:t.id,url:t.url}));
+    const page=app.windows().find(w=>w.url()===url);
+    assert.ok(page,'existing website tab'); await page.locator('#draft').fill('unsaved draft');
+    await app.evaluate(async({session},url)=>session.fromPartition('persist:web').cookies.set({url,name:'update-preserve',value:'yes'}),url);
+    const snapshot=await fs.readFile(manifestFile,'utf8');
+    assert.equal((await command('claude-check-update')).ok,true);
+    const available=(await state()).claude.update;
+    assert.equal(available.status,'available');assert.equal(available.version,official.version);
+    assert.equal(await fs.readFile(manifestFile,'utf8'),snapshot,'check leaves installation unchanged');
+    assert.equal(await page.locator('#draft').inputValue(),'unsaved draft');
+    await app.evaluate(({session})=>{
+      const extensions=session.fromPartition('persist:web').extensions;
+      const original=extensions.loadExtension.bind(extensions);
+      extensions.loadExtension=async(...args)=>{extensions.loadExtension=original;throw new Error('Injected candidate load failure');};
+    });
+    const failed=await command('claude-install-update');
+    assert.equal(failed.ok,false);assert.match(failed.error,/restored/i);
+    assert.equal((await state()).claude.status,'ready');assert.equal((await state()).claude.version,'0.0.1');
+    assert.equal(await fs.readFile(manifestFile,'utf8'),snapshot);
+    assert.equal((await command('claude-check-update')).ok,true);
+    assert.equal((await command('claude-install-update')).ok,true);
+    assert.equal((await state()).claude.version,official.version);
+    assert.deepEqual((await state()).tabs.map(t=>({id:t.id,url:t.url})),tabsBefore,'tab identities and navigation survive');
+    assert.equal(await page.locator('#draft').inputValue(),'unsaved draft','website never reloaded');
+    const cookies=await app.evaluate(async({session},url)=>session.fromPartition('persist:web').cookies.get({url,name:'update-preserve'}),url);
+    assert.equal(cookies[0]?.value,'yes');
+    const extensionStorage=await app.evaluate(async({webContents})=>webContents.getAllWebContents().find(w=>w.getURL().includes('/sidepanel.html')).executeJavaScript("chrome.storage.local.get('dioptraUpdateTest')"));
+    assert.equal(extensionStorage.dioptraUpdateTest,'retained','Claude account storage survives reload');
+    assert.equal((await command('claude-check-update')).ok,true);
+    assert.equal((await state()).claude.update.status,'current');
+    const bounds=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0],view=win.contentView.children.find(v=>v.webContents?.getURL().includes('/sidepanel.html'));return {height:win.getContentSize()[1],view:view.getBounds()};});
+    assert.equal(bounds.view.y+bounds.view.height,bounds.height-42);
+    await command('claude-update-settings',{autoCheck:true});
+    const beforeStartupCheck=await fs.readFile(manifestFile,'utf8');
+    await app.close(); app=null; await launch();
+    await poll(async()=>(await state()).claude.update.status,'current',45000);
+    assert.ok((await state()).claude.update.checkedAt,'startup performs a real check');
+    assert.equal(await fs.readFile(manifestFile,'utf8'),beforeStartupCheck,'automatic check never installs');
+    assert.equal((await command('remove-claude')).ok,true);
+    assert.equal((await state()).claude.status,'absent');
+    assert.deepEqual((await state()).tabs.map(t=>t.url),tabsBefore.map(t=>t.url));
+    console.log(`PASS: official Claude ${official.version}: verified live install/check/update, native load-failure rollback, persisted preferences, strict TLS, unchanged tabs/form/cookies, 42px footer and removal.`);
+  } finally {if(app)await app.close();server.closeAllConnections();server.close();tlsServer.closeAllConnections();tlsServer.close();await fs.rm(profile,{recursive:true,force:true});}
+})().catch(error=>{console.error(error);process.exit(1);});

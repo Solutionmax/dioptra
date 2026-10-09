@@ -6,14 +6,15 @@ function normalizedHost(host) {
 }
 
 // SOCKS only carries TCP bytes. Chromium still owns TLS, certificates and SNI.
-async function createLiveProxy() {
+async function createLiveProxy({ resolve = host => host } = {}) {
   const sockets = new Set();
   const active = new Map();
+  const destinations = new Map();
   const keyFor = (host, port) => `${normalizedHost(host)}|${Number(port)}`;
   let closePromise;
   function track(socket) {
     sockets.add(socket);
-    socket.once('close', () => sockets.delete(socket));
+    socket.once('close', () => { sockets.delete(socket); destinations.delete(socket); });
     return socket;
   }
   const server = net.createServer(client => {
@@ -92,7 +93,9 @@ async function createLiveProxy() {
       timer = setTimeout(() => fail(6), 10000);
       timer.unref();
       // net.connect uses the OS resolver, outside Electron's host-resolver rules.
-      upstream = track(net.connect({ host, port }));
+      upstream = track(net.connect({ host: resolve(normalizedHost(host)), port }));
+      destinations.set(client, normalizedHost(host));
+      destinations.set(upstream, normalizedHost(host));
       upstream.on('error', error => {
         if (state === 'connected') client.destroy();
         else fail(({ ECONNREFUSED: 5, ENOTFOUND: 4, EAI_AGAIN: 4, ENETUNREACH: 3, EHOSTUNREACH: 4, ETIMEDOUT: 6 })[error.code] || 1);
@@ -122,6 +125,13 @@ async function createLiveProxy() {
   const url = `socks5://127.0.0.1:${server.address().port}`;
   return {
     url,
+    closeHosts(hosts) {
+      for (const [socket, host] of destinations) if (hosts.has(host)) socket.destroy();
+      for (const [key, peers] of active) if (hosts.has(key.slice(0, key.lastIndexOf('|')))) {
+        for (const socket of peers) socket.destroy();
+        active.delete(key);
+      }
+    },
     addresses(host, port) {
       return [...new Set([...(active.get(keyFor(host, port)) || [])]
         .filter(socket => !socket.destroyed && socket.remoteAddress)

@@ -187,25 +187,49 @@ async function readBody(response) {
   }
   return Buffer.concat(chunks).subarray(0, MAX_BODY).toString('utf8');
 }
+// Anonymous document request only: Node supplies a request-scoped TLS policy where
+// Electron session.fetch has no WebContents certificate-error callback. No pool can
+// retain an exception. Chromium still owns TLS for all interactive website traffic.
+function mappedFetch(target, signal, resolveRoute) {
+  const url = new URL(target), route = resolveRoute(url.hostname), { Readable } = require('node:stream');
+  if (url.username || url.password) throw new Error('URL credentials are not allowed in anonymous comparisons.');
+  const transport = require(url.protocol === 'https:' ? 'node:https' : 'node:http');
+  return new Promise((resolve, reject) => {
+    const request = transport.get(url, {
+      agent: false, signal, rejectUnauthorized: route?.skipSSL !== true,
+      ...(route?.ip ? { lookup: (_host, options, done) => {
+        const address = { address: route.ip, family: require('node:net').isIP(route.ip) };
+        if (options.all) done(null, [address]); else done(null, address.address, address.family);
+      } } : {}),
+      headers: { 'Cache-Control': 'no-cache', 'Accept-Encoding': 'identity' },
+    }, incoming => {
+      const headers = new Headers();
+      for (const [name, value] of Object.entries(incoming.headers)) if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(', ') : value);
+      resolve({ status: incoming.statusCode, headers, body: Readable.toWeb(incoming), ip: incoming.socket.remoteAddress || '' });
+    });
+    request.on('error', reject);
+  });
+}
 // Fetches one document, following up to MAX_REDIRECTS hops by hand so each hop is recorded.
-async function fetchDocument(ses, url, { timeout = TIMEOUT_MS } = {}) {
+async function fetchDocument(ses, url, { timeout = TIMEOUT_MS, resolveRoute } = {}) {
   const started = Date.now(), redirects = [];
   const signal = AbortSignal.timeout(timeout);
   try {
     let target = url;
     for (;;) {
-      const response = await ses.fetch(target, { redirect: 'manual', credentials: 'omit', cache: 'no-store', signal });
+      const response = await (resolveRoute ? mappedFetch(target, signal, resolveRoute) : ses.fetch(target, { redirect: 'manual', credentials: 'omit', cache: 'no-store', signal }));
       const location = response.headers.get('location');
       if (response.status >= 300 && response.status < 400 && location && redirects.length < MAX_REDIRECTS) {
         await response.body?.cancel().catch(() => {});
         const next = new URL(location, target);
         // A migration server controls Location: never follow it off http(s) (file:, data:, ftp: …).
         if (!['http:', 'https:'].includes(next.protocol)) throw new Error(`Blocked redirect to ${next.protocol} URL.`);
+        if (next.username || next.password) throw new Error('URL credentials are not allowed in anonymous comparisons.');
         target = next.href; redirects.push({ status: response.status, location: target }); continue;
       }
       const headers = Object.fromEntries(response.headers);
       const body = await readBody(response);
-      return { ok: true, status: response.status, finalUrl: target, ms: Date.now() - started, redirects, headers: pickHeaders(headers), body };
+      return { ok: true, ip: response.ip || '', status: response.status, finalUrl: target, ms: Date.now() - started, redirects, headers: pickHeaders(headers), body };
     }
   } catch (error) {
     return { ok: false, error: error.name === 'TimeoutError' ? 'The request timed out after 20 seconds.' : String(error.cause?.message || error.message || error).slice(0, 200), ms: Date.now() - started, redirects, headers: {}, body: '' };

@@ -3,7 +3,7 @@ const path = require('node:path');
 const { isIP } = require('node:net');
 const { domainToASCII } = require('node:url');
 
-const ROUTE_BAR_HEIGHT = 36;
+const ROUTE_BAR_HEIGHT = 48, FOOTER_HEIGHT = 42;
 // A build can carry its own feed in package.json ("updateFeed"), used for update test builds.
 const DEFAULT_UPDATE_FEED = (() => { try { return require('../package.json').updateFeed; } catch { return ''; } })() || 'https://github.com/Solutionmax/dioptra/releases/latest/download/';
 const RELEASE_PAGE = 'https://github.com/Solutionmax/dioptra/releases/latest';
@@ -22,13 +22,14 @@ function validateRules(rules) {
     if (!domain || domain.length > (www ? 249 : 253) || !domain.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) throw new Error('Invalid domain name.');
     const ip = rule.ip.trim();
     if (!isIP(ip) || ip.includes('%')) throw new Error('Use a valid IPv4 or IPv6 address without a port.');
-    const valid = www ? { domain, ip, enabled: rule.enabled !== false, www } : { domain, ip, enabled: rule.enabled !== false };
+    const skipSSL = rule.skipSSL === true;
+    const valid = www ? { domain, ip, enabled: rule.enabled !== false, www, skipSSL } : { domain, ip, enabled: rule.enabled !== false, skipSSL };
     for (const name of ruleNames(valid)) { if (seen.has(name)) throw new Error(`${name} is already in the list.`); seen.add(name); }
     return valid;
   });
 }
 // One entry per name, so a lookup by host name also finds the www name of a rule.
-const expandRules = rules => rules.flatMap(rule => ruleNames(rule).map(domain => ({ domain, ip: rule.ip, enabled: rule.enabled })));
+const expandRules = rules => rules.flatMap(rule => ruleNames(rule).map(domain => ({ domain, ip: rule.ip, enabled: rule.enabled, skipSSL: rule.skipSSL === true })));
 function resolverRules(rules) {
   return expandRules(validateRules(rules)).filter(r => r.enabled).map(r => `MAP ${r.domain} ${isIP(r.ip) === 6 ? `[${r.ip}]` : r.ip}`).join(', ');
 }
@@ -69,8 +70,9 @@ function compareLayout(width, ratio) {
   const left = Math.max(1, Math.round(width * compareShare(ratio)) - 3);
   return { left: { x: 0, width: left }, splitter: { x: left, width: 6 }, right: { x: left + 6, width: Math.max(1, width - left - 6) } };
 }
-function devtoolsLayout(width, height, sidebar, dock, ratio, open) {
-  const page = { x: 0, y: 132, width: Math.max(1, width - sidebar), height: Math.max(1, height - 162) };
+function devtoolsLayout(width, height, sidebar, dock, ratio, open, routeHeight = ROUTE_BAR_HEIGHT) {
+  const top = 96 + routeHeight;
+  const page = { x: 0, y: top, width: Math.max(1, width - sidebar), height: Math.max(1, height - top - FOOTER_HEIGHT) };
   if (!open) return { page, bar: null, tools: null, splitter: null };
   const vertical = dock !== 'bottom';
   const total = vertical ? page.width : page.height;
@@ -86,16 +88,20 @@ function devtoolsLayout(width, height, sidebar, dock, ratio, open) {
     page.width -= size + 6;
     const x = dock === 'left' ? 0 : page.width + 6;
     if (dock === 'left') page.x = size + 6;
-    bar = { x, y: 132, width: size, height: 32 };
-    tools = { x, y: 164, width: size, height: page.height - 32 };
-    splitter = { x: dock === 'left' ? size : fullWidth - size - 6, y: 132, width: 6, height: page.height };
+    bar = { x, y: top, width: size, height: 32 };
+    tools = { x, y: top + 32, width: size, height: page.height - 32 };
+    splitter = { x: dock === 'left' ? size : fullWidth - size - 6, y: top, width: 6, height: page.height };
   }
   return { page, bar, tools, splitter };
 }
 function readSettings(file) {
-  if (!fs.existsSync(file)) return { rules: [], tabs: ['about:blank'], updateFeed: '', autoUpdates: true, autoUpdatesChosen: false, devtoolsDock: 'bottom', devtoolsRatio: .4, compareRatio: .5, sslVerification: false, servers: [] };
+  if (!fs.existsSync(file)) return { onboardingCompleted: false, onboardingStep: 0, onboardingURL: '', rules: [], tabs: ['about:blank'], updateFeed: '', autoUpdates: true, claudeAutoCheck: true, autoUpdatesChosen: false, devtoolsDock: 'bottom', devtoolsRatio: .4, compareRatio: .5, sslVerification: true, sslPolicyVersion: 1, sslMigration: null, servers: [] };
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-  return { sslVerification: data.sslVerification === true, rules: validateRules(data.rules), servers: validServers(data.servers), tabs: Array.isArray(data.tabs) && data.tabs.length ? data.tabs.slice(0, 50).map(navigationURL) : ['about:blank'], updateFeed: typeof data.updateFeed === 'string' ? data.updateFeed : '', autoUpdates: data.autoUpdatesChosen === true ? data.autoUpdates !== false : true, autoUpdatesChosen: data.autoUpdatesChosen === true, devtoolsDock: ['left', 'right', 'bottom'].includes(data.devtoolsDock) ? data.devtoolsDock : 'bottom', devtoolsRatio: Number.isFinite(data.devtoolsRatio) ? Math.max(.2, Math.min(.7, data.devtoolsRatio)) : .4, compareRatio: compareShare(data.compareRatio) };
+  const legacyBypass = data.sslPolicyVersion !== 1 && data.sslVerification !== true;
+  const rules = validateRules(Array.isArray(data.rules) ? data.rules.map(rule => legacyBypass && rule && !Object.hasOwn(rule, 'skipSSL') ? { ...rule, skipSSL: true } : rule) : data.rules);
+  const sslMigration = legacyBypass ? 'Legacy global SSL bypass was narrowed to existing domain rules. Live, account services and new rules verify certificates.' : typeof data.sslMigration === 'string' ? data.sslMigration : null;
+  let onboardingURL = ''; try { if (data.onboardingURL) onboardingURL = navigationURL(data.onboardingURL); } catch {}
+  return { onboardingCompleted: data.onboardingCompleted !== false, onboardingStep: [0, 1, 2].includes(data.onboardingStep) ? data.onboardingStep : 0, onboardingURL, sslVerification: true, sslPolicyVersion: 1, sslMigration, rules, servers: validServers(data.servers), tabs: Array.isArray(data.tabs) && data.tabs.length ? data.tabs.slice(0, 50).map(navigationURL) : ['about:blank'], updateFeed: typeof data.updateFeed === 'string' ? data.updateFeed : '', autoUpdates: data.autoUpdatesChosen === true ? data.autoUpdates !== false : true, autoUpdatesChosen: data.autoUpdatesChosen === true, claudeAutoCheck: data.claudeAutoCheck !== false, devtoolsDock: ['left', 'right', 'bottom'].includes(data.devtoolsDock) ? data.devtoolsDock : 'bottom', devtoolsRatio: Number.isFinite(data.devtoolsRatio) ? Math.max(.2, Math.min(.7, data.devtoolsRatio)) : .4, compareRatio: compareShare(data.compareRatio) };
 }
 function saveSettings(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -118,4 +124,21 @@ function ptrName(ip) {
   return `${groups.map(g => g.padStart(4, '0')).join('').split('').reverse().join('.')}.ip6.arpa`;
 }
 const daysLeft = (expires, now = Date.now()) => Math.floor((expires - now) / 86400000);
-module.exports = { ptrName, certSummary, daysLeft, ROUTE_BAR_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, compareLayout, compareShare, validateRules, expandRules, resolverRules, validServers, parseServers, MAX_SERVER_CSV, navigationURL, readSettings, saveSettings };
+// A replacement navigation must not race a still-pending accepted TLS load.
+function cancelNavigation(wc, timeout = 1500) {
+  if (wc.isDestroyed()) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = error => {
+      if (settled) return;
+      settled = true; clearTimeout(timer);
+      wc.removeListener('did-stop-loading', stopped); wc.removeListener('destroyed', destroyed);
+      error ? reject(error) : resolve();
+    };
+    const stopped = () => { if (wc.isDestroyed() || !wc.isLoading()) finish(); }, destroyed = () => finish();
+    const timer = setTimeout(() => finish(new Error('The previous website load could not be cancelled. Affected tabs were closed; domain rules are saved.')), timeout);
+    wc.on('did-stop-loading', stopped); wc.once('destroyed', destroyed);
+    try { wc.stop(); stopped(); } catch (error) { finish(error); }
+  });
+}
+module.exports = { ptrName, certSummary, daysLeft, ROUTE_BAR_HEIGHT, FOOTER_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, compareLayout, compareShare, validateRules, expandRules, resolverRules, validServers, parseServers, MAX_SERVER_CSV, navigationURL, readSettings, saveSettings, cancelNavigation };

@@ -31,7 +31,7 @@ function detectSite({ headers = {}, cookies = [], generators = [], urls = [] } =
   const h = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), text(Array.isArray(v) ? v.join(', ') : v, 200)]));
   generators = generators.slice(0, 20).map(g => text(g, 120)).filter(Boolean);
   const assets = urls.slice(0, 600).map(u => String(u).slice(0, 400)).join('\n');
-  const result = { platform: '', version: '', source: '', shop: '', shopVersion: '', theme: '', extras: [], php: '', server: '' };
+  const result = { platform: '', version: '', source: '', shop: '', shopVersion: '', theme: '', builder: '', builderVersion: '', extras: [], php: '', server: '' };
 
   for (const [name, generator, asset, cookie, header] of PLATFORMS) {
     const tag = generator && generators.find(g => generator.test(g)), fromHeader = header ? header(h) : '';
@@ -47,11 +47,13 @@ function detectSite({ headers = {}, cookies = [], generators = [], urls = [] } =
   if (woo || /\/plugins\/woocommerce\//i.test(assets)) Object.assign(result, { shop: 'WooCommerce', shopVersion: version(woo) });
   if (result.platform === 'WordPress') {
     const count = (pattern, skip = []) => { const seen = new Map(); for (const m of assets.matchAll(pattern)) if (!skip.includes(m[1].toLowerCase())) seen.set(m[1].toLowerCase(), (seen.get(m[1].toLowerCase()) || 0) + 1); return [...seen].sort((a, b) => b[1] - a[1]).map(([slug]) => slug); };
+    const elementor = generators.find(g => /^Elementor\b/i.test(g));
+    if (elementor || /\/plugins\/elementor(?:-pro)?\//i.test(assets)) { result.builder='Elementor'; result.builderVersion=version(elementor); }
     result.theme = pretty(count(/\/wp-content\/themes\/([a-z0-9][a-z0-9_-]{0,60})\//gi)[0] || '');
-    result.extras = count(/\/wp-content\/plugins\/([a-z0-9][a-z0-9_-]{0,60})\//gi, ['woocommerce']).slice(0, 8).map(pretty);
+    result.extras = count(/\/wp-content\/plugins\/([a-z0-9][a-z0-9_-]{0,60})\//gi, ['woocommerce', 'elementor', 'elementor-pro']).slice(0, 8).map(pretty);
   }
   result.php = version((h['x-powered-by'] || '').match(/PHP\/([\d.]+)/i)?.[1]);
   result.server = text((h.server || '').split(/[\/ (]/)[0], 30);
-  return result.platform || result.php ? result : null;
+  return result.platform || result.php || result.server ? result : null;
 }
 module.exports = { detectSite };

@@ -19,6 +19,8 @@ A browser for website migrations: open any site on its new server before DNS cha
 
 ![Dioptra comparing the new server (Hostfile) with the live site side by side](docs/screenshots/compare.png)
 
+![Dioptra start page](docs/screenshots/welcome.png)
+
 ## Why Dioptra
 
 Moving a website to a new server usually means editing `/etc/hosts`, flushing DNS, and guessing which server you are actually looking at. Dioptra does this inside one browser window instead:
@@ -40,14 +42,15 @@ Moving a website to a new server usually means editing `/etc/hosts`, flushing DN
 | macOS, Intel | `Dioptra-<version>-mac-x64.zip` |
 | Windows 11 and 10, 64 bit | `Dioptra-<version>-win-x64.exe` |
 | Linux x86-64 | `Dioptra-<version>-linux-x86_64.AppImage` |
+| Ubuntu / Debian, amd64 | `Dioptra-<version>-ubuntu-amd64.deb` |
 
-Get the files from the [latest release](../../releases/latest). Each release includes a `SHA256SUMS.txt` file.
+Mac disk images (`.dmg`) are also available for both architectures. Get the files from the [latest release](../../releases/latest). Each release includes a `SHA256SUMS.txt` file.
 
 ## Install
 
 ### macOS
 
-1. Unzip the file and move **Dioptra** to **Applications**.
+1. Open the disk image and drag **Dioptra** to **Applications**, or unzip the ZIP and move the app there.
 2. Open Dioptra. The app is not yet notarized by Apple, so the first time macOS says it cannot verify the app.
 3. Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to the Dioptra message. You only need to do this when you install by hand; updates installed from inside Dioptra open without it.
 
@@ -74,11 +77,21 @@ chmod +x Dioptra-*-linux-x86_64.AppImage
 
 Run it as a normal user. If FUSE is not available, add `--appimage-extract-and-run`.
 
+### Ubuntu / Debian
+
+Download the `.deb` from the release, then install it with:
+
+```sh
+sudo apt install ./Dioptra-1.0.0-ubuntu-amd64.deb
+```
+
+Open **Dioptra** from your applications menu as your normal user. The package manager handles dependencies.
+
 ## How it works
 
 ### 1. Add a domain rule
 
-Open **Domains**, enter the domain and the IP address of the new server (IPv4 or IPv6), then choose **Apply and restart**. Leave **Include www** on to cover the `www` name with the same rule; add other subdomains separately. With a server list (**Settings**, **Servers**, **Import CSV**: a server name and an IP address on each line) you can type a server name in the IP field instead of its address. You can switch rules on and off without deleting them.
+Open **Domains**, enter the domain and the IP address of the new server (IPv4 or IPv6), then choose **Add domain**. Changes apply immediately: affected pages reload, while Dioptra and your other tabs stay open. Leave **Include www** on to cover the `www` name with the same rule; add other subdomains separately. With a server list (**Settings**, **Servers**, **Import CSV**: a server name and an IP address on each line) you can type a server name in the IP field instead of its address. You can switch rules on and off without deleting them.
 
 ![Domains panel with three domain rules](docs/screenshots/domains.png)
 
@@ -86,18 +99,16 @@ Open **Domains**, enter the domain and the IP address of the new server (IPv4 or
 
 ### 2. Browse the new server
 
-Type the normal address. The blue **HOSTFILE** badge in the route bar means the page came from your rule. The bar shows the rule IP, the IP Dioptra actually connected to (with a match check) and the reverse DNS name of that IP, the certificate state and the HTTP status with load time. Pages without a rule show a green **LIVE** badge.
+Type the normal address. The blue **NEW SERVER** badge in the route bar means the page came from your rule. The bar shows the connected IP and its reverse DNS name. **Site info** opens connection and certificate details. A cached page is labelled **Cached**; no fresh IP or certificate measurement is claimed. Pages without a rule show a green **LIVE** badge.
 
 ![Single view with the route bar showing Hostfile, rule IP, connected IP and certificate state](docs/screenshots/single.png)
 
 Four things in the window open a small card with details:
 
-- **Certificate valid** (with SSL verification on): who the certificate was issued to, the issuer and the expiry date with the days left.
-- **Site**: the platform Dioptra recognised, shop, theme, plugins that are visible in the page, PHP version and web server. This is read from what the page itself gives away (generator tag, file paths, cookie names, headers). When nothing is recognised, nothing is shown.
+- **SSL valid** in Site info: opens certificate details, including the issuer and expiry date.
+- **Site info**: the platform Dioptra recognised, shop, theme, plugins that are visible in the page, PHP version and web server. This is read from what the page itself gives away (generator tag, file paths, cookie names, headers). When nothing is recognised, nothing is shown.
 - **DNS** (next to the domain name): the A, AAAA, CNAME, MX, TXT and NS records that public DNS gives for the name you are visiting, plus its `www` name. Nothing is looked up until you click, and **Refresh** asks again.
 - **RAM** in the footer: memory per tab, so you can see which site is heavy. Click a tab to jump to it.
-
-![Certificate card with issuer and expiry date](docs/screenshots/certificate.png)
 
 ![Site card showing WordPress, WooCommerce, theme, plugins, PHP version and web server](docs/screenshots/site.png)
 
@@ -109,7 +120,7 @@ Four things in the window open a small card with details:
 
 Click **Compare**. The left pane is the new server through your rule, the right pane is the live site through normal DNS. Each pane has its own route bar and its own temporary cookies. Click a pane to use the address bar, back, forward and find in that pane.
 
-To compare with a different address, click the domain in the right pane bar and type the other URL, for example the copy of the site on a temporary test domain. **Same URL** puts the right pane back on the page of the left pane. Compare also works on a site without a domain rule: the right pane then asks which address to compare with. The right pane always uses normal DNS, so a site that is only reachable through a rule goes on the left. Differences is available when both panes are on the same site.
+To compare with a different address, use the URL field in the right pane bar, for example the copy of the site on a temporary test domain. **Same URL** puts the right pane back on the page of the left pane. Compare also works on a site without a domain rule: the right pane then asks which address to compare with. The right pane always uses normal DNS, so a site that is only reachable through a rule goes on the left. Differences is available when both panes are on the same site.
 
 Drag the bar between the two panes to make one side larger, for example to see the desktop layout of the new server next to a narrow live site. Each pane keeps at least a quarter of the width. As soon as the panes are not equal a small button appears between the pane bars: one click makes them equal again, and so does a double click on the bar. The position is remembered.
 
@@ -130,6 +141,8 @@ Click **Differences**. Dioptra downloads the page from both servers and compares
 
 Compare shows you whether both sides *look* the same. Differences shows what the servers actually *send*, so it also catches things you cannot see, like hidden malware or SEO spam.
 
+Differences makes fresh anonymous document requests on both sides using Node's certificate trust store. A private CA trusted only by Chromium or the operating system may therefore work in a browser pane but fail in Differences. Hostfile applies the matching domain rule's Skip SSL choice; Live always verifies certificates and uses normal DNS. Neither side sends your saved cookies. Each reported IP belongs to the final document after redirects.
+
 ![Differences view listing a script that loads only on the live site](docs/screenshots/differences.png)
 
 ![HTML tab of the Differences view showing an obfuscated script that only exists on the live server](docs/screenshots/differences-html.png)
@@ -138,23 +151,29 @@ Compare shows you whether both sides *look* the same. Differences shows what the
 
 ### 5. Settings
 
-- **Verify website SSL certificates:** off by default so test servers with self-signed or mismatched certificates still open. Turn it on for strict checking (applies after a restart).
+Settings stays in the right sidebar, organized into **General**, **Browsing & privacy**, **Servers**, **Claude**, **Dioptra updates** and **About Dioptra**.
+
+- **SSL verification:** on by default. A domain rule can explicitly skip certificate errors for its new server. Changes apply immediately. Live, Claude and sign-in services stay strict.
 - **Clear cache** (footer): clears the cache and DNS cache and reloads the page, in Compare both panes. Cookies and logins are kept.
 - **Clear site data:** removes cookies, storage, service workers and cache for the current site only. Handy when an old session hides what the new server does. Claude and sign-in services are never cleared this way.
-- **Bookmarks, history and downloads** live under the Library button in the toolbar.
+- **Bookmarks, history and downloads** live under the Library button in the toolbar, with search, progress and download controls.
 - **Developer Tools** open inside the window and can be docked left, right or below (F12).
 
-![Settings panel with SSL verification, Clear site data and updates](docs/screenshots/settings.png)
+![Settings categories in the existing sidebar](docs/screenshots/settings.png)
+
+![Library with searchable saved pages](docs/screenshots/library.png)
 
 ### Updates
 
-The footer shows the installed version. Dioptra checks for new releases at startup and every four hours; nothing installs by itself. When an update is available, the footer and a notice at the top right tell you. Click either to open **Updates**, choose **Download update** and then **Install and restart**. This works on Linux and Windows and, from 0.7.2, on macOS. Coming from 0.7.0 or 0.7.1 on macOS you update by hand one last time: download the zip from the release page and replace the app. You can turn automatic checks off in **Settings → Updates**.
+The footer shows the installed version. Dioptra checks for new releases at startup and every four hours; nothing installs by itself. When an update is available, the footer and a notice at the top right tell you. Click either to open **Updates**, choose **Download update** and then **Install and restart**. This works with the Linux AppImage, Windows installer and macOS ZIP updates. Ubuntu/Debian packages use the system package manager and may request administrator authentication. Coming from 0.7.0 or 0.7.1 on macOS you update by hand one last time: download the zip from the release page and replace the app. You can turn automatic checks off in **Settings → Dioptra updates**.
 
 ![Updates panel with the installed version and how updates work](docs/screenshots/updates.png)
 
 ### Claude
 
 Click the Claude icon, choose **Install Claude**, and sign in with your Claude account (a paid plan is required by the extension). Dioptra downloads the official extension from Google's update service and verifies its signature before installing it. Claude can then work with your Dioptra tabs. This integration is experimental: Dioptra is not Google Chrome, and some Chrome features are not available. See [technical notes](docs/technical-notes.md) for details.
+
+Manage the extension under **Settings → Claude**: check for a newer version, choose when to install it, or run a connection check. Automatic checking only notifies; it never installs an extension update by itself. Updating reloads Claude while the browser and website tabs stay open, so save an unfinished Claude draft first. Troubleshooting shows a readable summary, with technical details and copyable diagnostics underneath.
 
 ## Privacy and security
 
@@ -173,8 +192,8 @@ npm ci
 npm start                 # run from source
 npm test                  # unit tests
 npm run test:browser      # real browser flow (use xvfb-run on a headless Linux machine)
-npm run dist:mac          # macOS zips for Apple silicon and Intel
-npm run dist:linux        # Linux AppImage
+npm run dist:mac          # macOS DMG + ZIP for Apple silicon and Intel
+npm run dist:linux        # Linux AppImage + Ubuntu/Debian .deb
 npm run dist:win          # Windows installer (on Linux this needs wine, for example the electronuserland/builder:wine image)
 ```
 

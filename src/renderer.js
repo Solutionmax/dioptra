@@ -1,13 +1,15 @@
 const $ = id => document.getElementById(id);
-let libraryTab = 'bookmarks', libraryKey = '';
-let state, editing = null, toastTimer, tabsKey = '', rulesKey = '', www = true, suggestions = [], suggestionTotal = 0, activeSuggestion = 0, suggestionChosen = false, serverPage = 0, serverNote = '';
+let libraryTab = 'bookmarks', libraryKey = '', librarySearch = '', settingsCategory = 'home', feedDirty = false, claudeActionBusy = false, claudeChecking = false;
+let state, editing = null, toastTimer, tabsKey = '', rulesKey = '', www = true, skipSSL = false, suggestions = [], suggestionTotal = 0, activeSuggestion = 0, suggestionChosen = false, serverPage = 0, serverNote = '';
 const SERVER_PAGE_SIZE = 8, MAX_SUGGESTIONS = 5, MAX_SERVER_CSV = 1024 * 1024; // the CSV limit is the one in core.cjs
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 7000); }
 async function command(action, data) { try { const result = await window.browser.command(action, data); if (!result.ok) toast(result.error); return result; } catch (error) { toast(error.message); return { ok: false }; } }
 function el(tag, className, text) { const node = document.createElement(tag); node.className = className; if (text !== undefined) node.textContent = text; return node; }
 function render(next) {
   state = next;
-  document.documentElement.style.setProperty('--rb', `${state.routeBarHeight ?? 36}px`);
+  if (state.panel === 'updates') settingsCategory = 'updates';
+  document.documentElement.style.setProperty('--panel', state.panel === 'claude' ? '480px' : '380px');
+  document.documentElement.style.setProperty('--rb', `${state.routeBarHeight ?? 48}px`);
   renderWorkspace();
   const nextTabsKey = JSON.stringify([state.activeId, state.tabs.map(t => [t.id, t.title, t.loading, t.route.label])]);
   if (tabsKey !== nextTabsKey) {
@@ -31,20 +33,19 @@ function render(next) {
   }
   $('panel').hidden = !state.panel; document.body.classList.toggle('panel-open', Boolean(state.panel));
   $('domains').classList.toggle('selected', state.panel === 'domains');
-  $('settings').classList.toggle('selected', state.panel === 'settings');
+  $('settings').classList.toggle('selected', ['settings', 'updates'].includes(state.panel));
   $('domains-section').hidden = state.panel !== 'domains';
   $('library-section').hidden = state.panel !== 'library';
-  $('settings-section').hidden = state.panel !== 'settings';
+  $('settings-section').hidden = !['settings', 'updates'].includes(state.panel);
   document.body.classList.toggle('claude-open', state.panel === 'claude' && state.claude.status === 'ready');
   $('claude-section').hidden = state.panel !== 'claude';
   $('claude').classList.toggle('selected', state.panel === 'claude');
   $('claude-message').textContent = state.claude.message;
   $('claude-install-info').hidden = state.claude.status === 'ready';
-  $('claude-controls').hidden = state.claude.status !== 'ready';
   $('install-claude').disabled = ['loading','installing'].includes(state.claude.status);
-  $('update-section').hidden = state.panel !== 'updates';
-  $('panel-title').textContent = { domains: 'Domains', settings: 'Settings', updates: 'Updates', claude: 'Claude', library: 'Library' }[state.panel] || '';
-  $('panel-subtitle').textContent = state.panel === 'claude' ? 'Experimental · inside Dioptra' : state.panel === 'domains' ? 'Only active in this browser' : state.panel === 'updates' ? 'Keep your migration workspace current' : 'Your Dioptra preferences';
+  $('panel-title').textContent = { domains: 'Domains', settings: 'Settings', updates: 'Settings', claude: 'Claude', library: 'Library' }[state.panel] || '';
+  $('panel-subtitle').textContent = state.panel === 'claude' ? 'Experimental · inside Dioptra' : state.panel === 'domains' ? 'Only active in this browser' : state.panel === 'library' ? 'Saved pages, visits and downloads' : 'Your Dioptra preferences';
+  renderSettings();
   const bounds = state.toolsLayout;
   for (const [id, rect] of [['tools-bar', bounds?.bar], ['tools-splitter', bounds?.splitter]]) {
     $(id).hidden = !rect;
@@ -68,19 +69,18 @@ function render(next) {
   $('rules').replaceChildren();
   for (const [index, rule] of state.rules.entries()) {
     const row = el('div', 'rule'); const text = el('div', 'rule-text'); const domain = el('div', 'rule-domain'), ip = el('div', 'rule-ip', rule.ip), server = serverFor(rule.ip), names = rule.www ? `${rule.domain} and www.${rule.domain}` : rule.domain;
-    domain.append(el('span', '', rule.domain)); if (rule.www) domain.append(el('span', 'www-chip', '+ WWW')); if (server) ip.append(el('span', 'srv', server.name));
+    domain.append(el('span', '', rule.domain)); const badges = el('div', 'rule-badges'); badges.append(el('span', 'www-chip', rule.www ? '+ WWW' : 'Exact name'), el('span', `ssl-chip ${rule.skipSSL ? 'skipped' : 'strict'}`, rule.skipSSL ? 'SSL skipped' : 'SSL strict')); domain.append(badges); if (server) ip.append(el('span', 'srv', server.name));
     text.append(domain, ip); row.append(text);
-    const toggle = el('button', 'toggle' + (rule.enabled ? ' on' : '')); toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-checked', String(rule.enabled)); toggle.setAttribute('aria-label', `Enable ${names}`); toggle.onclick = () => command('save-rules', state.rules.map((r, i) => i === index ? { ...r, enabled: !r.enabled } : r));
-    const edit = el('button', 'small', '✎'); edit.setAttribute('aria-label', `Edit ${rule.domain}`); edit.onclick = () => { editing = rule.domain; $('domain-input').value = rule.domain; $('ip-input').value = rule.ip; setWww(rule.www === true); ipNote(); $('save-rule').textContent = 'Save'; $('cancel-edit').hidden = false; $('domain-input').focus(); };
-    const remove = el('button', 'small', '⌫'); remove.setAttribute('aria-label', `Remove ${rule.domain}`); remove.onclick = async () => { const result = await command('save-rules', state.rules.filter(r => r.domain !== rule.domain)); if (result.ok && editing === rule.domain) resetForm(); };
+    const toggle = el('button', 'toggle' + (rule.enabled ? ' on' : '')); toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-checked', String(rule.enabled)); toggle.setAttribute('aria-label', `Enable ${names}`); toggle.onclick = async () => { if ((await command('save-rules', state.rules.map((r, i) => i === index ? { ...r, enabled: !r.enabled } : r))).ok) toast('Rule updated. Affected tabs reloaded.'); };
+    const edit = el('button', 'small', '✎'); edit.setAttribute('aria-label', `Edit ${rule.domain}`); edit.onclick = () => { editing = rule.domain; $('domain-input').value = rule.domain; $('ip-input').value = rule.ip; setWww(rule.www === true); setSkipSSL(rule.skipSSL === true); ipNote(); $('save-rule').textContent = 'Save'; $('cancel-edit').hidden = false; $('domain-input').focus(); };
+    const remove = el('button', 'small', '⌫'); remove.setAttribute('aria-label', `Remove ${rule.domain}`); remove.onclick = async () => { const result = await command('save-rules', state.rules.filter(r => r.domain !== rule.domain)); if (result.ok) { if (editing === rule.domain) resetForm(); toast('Rule removed. Affected tabs reloaded.'); } };
     row.append(toggle, edit, remove); $('rules').append(row);
   }
   renderServers();
   }
-  $('empty-rules').hidden = state.rules.length > 0; $('apply').disabled = !state.pending; $('pending').textContent = state.pending ? 'Domain or SSL changes saved. Restart to activate them.' : 'All saved domain rules are active.';
-  $('apply').parentElement.classList.toggle('pending', state.pending);
+  $('empty-rules').hidden = state.rules.length > 0; $('ssl-migration').hidden = !state.sslMigration; $('ssl-migration').textContent = state.sslMigration || '';
   $('update-message').textContent = state.update.message; $('auto-updates').checked = state.autoUpdates;
-  if (document.activeElement !== $('feed')) $('feed').value = state.updateFeed;
+  if (!feedDirty) $('feed').value = state.updateFeed;
   $('check-update').disabled = !state.updateFeed || ['checking', 'downloading'].includes(state.update.status);
   $('download-update').hidden = state.update.status !== 'available'; $('install-update').hidden = state.update.status !== 'downloaded';
   renderUpdateDetails();
@@ -93,13 +93,71 @@ function render(next) {
   $('update-notice').textContent = state.update.status === 'downloaded' ? 'Restart to update' : state.update.status === 'downloading' ? `Downloading ${Math.round(state.update.progress || 0)}%` : `Update ${state.update.version || ''} available`.replace('  ', ' ');
   $('open-release').hidden = !(manual && updating); if (manual) { $('download-update').hidden = true; $('install-update').hidden = true; }
   $('versions').textContent = `Dioptra ${state.versions.app} · Chromium ${state.versions.chromium} · Electron ${state.versions.electron}`;
+  $('auto-updates').parentElement.hidden = state.privateBeta;
+  $('advanced').hidden = state.privateBeta;
+  $('release-page').textContent = state.privateBeta ? 'Local release notes' : 'Release notes';
+  $('settings-update-hint').textContent = state.privateBeta ? 'Private beta for local testing. Updates come with your beta downloads.' : 'Check for new versions, download updates and restart to install.';
+  renderOnboarding();
+  document.dispatchEvent(new CustomEvent('dioptra:state', { detail: state })); // the scene on the start page (scene.js) follows the rules and the page
 }
-function resetForm() { editing = null; $('rule-form').reset(); $('save-rule').textContent = 'Add'; $('cancel-edit').hidden = true; setWww(true); ipNote(); closeSuggestions(); }
+function renderSettings() {
+  const home=settingsCategory==='home';
+  $('settings-menu').hidden=!home;$('settings-home-note').hidden=!home;$('settings-back').hidden=home;
+  document.querySelectorAll('[data-settings-page]').forEach(node=>node.hidden=node.dataset.settingsPage!==settingsCategory);
+  $('about-version').textContent=`Dioptra v${state.versions.app}`;
+  const tab=state.tabs.find(tab=>tab.id===state.activeId);let host='';try{host=new URL(tab?.url).host;}catch{}
+  $('settings-current-site').textContent=host?`Current site · ${host}`:'Current site';
+  $('clear-site-data').disabled=!host;
+  renderClaudeSettings();
+}
+async function openSettings(category) {
+  settingsCategory=category;
+  if(state.panel!=='settings') await command('panel','settings');
+  renderSettings();document.querySelector('#panel .panel-scroll').scrollTop=0;
+  if(category==='home') $('settings-menu').querySelector('button').focus();else $('settings-back').focus();
+}
+function renderClaudeSettings() {
+  const c=state.claude, u=c.update||{status:'idle'}, installed=Boolean(c.version), ready=c.status==='ready';
+  const busy=claudeActionBusy||['loading','installing'].includes(c.status)||['checking','installing'].includes(u.status);
+  $('claude-status').textContent={absent:'Not installed',loading:'Loading…',ready:'Installed',installing:'Installing…',error:'Needs attention'}[c.status]||'Not installed';
+  $('claude-status').className=`status-chip ${c.status==='error'?'amber':ready?'':'blue'}`;
+  $('claude-version').textContent=c.version?`v${c.version}`:'';
+  $('settings-claude-message').textContent=c.message||'';$('settings-claude-message').hidden=!c.message;
+  $('settings-install-claude').hidden=installed||ready;$('settings-install-claude').disabled=busy;
+  $('claude-chat').hidden=$('claude-options').hidden=!ready;$('claude-controls').hidden=!installed&&!ready;
+  for(const id of ['claude-chat','claude-options','claude-refresh','remove-claude','claude-update-action','claude-auto-updates']) $(id).disabled=busy;
+  $('claude-check').disabled=busy||claudeChecking||!ready;$('claude-refresh').disabled=busy||!ready;
+  $('install-claude').disabled=busy;
+  $('claude-update-title').textContent={idle:'Not checked yet',checking:'Checking…',available:'Update available',current:'You’re up to date',installing:'Updating Claude…',error:'Could not check or update'}[u.status]||'Not checked yet';
+  $('claude-update-message').textContent=u.message||(u.status==='available'&&u.version?`Version ${u.version}`:c.version?`Installed version ${c.version}`:'Install Claude to check for updates.');
+  $('claude-update-state').className=`extension-update ${u.status==='available'?'available':u.status==='error'?'error':''}`;
+  $('claude-update-action').textContent=busy?'Please wait…':u.status==='available'?'Update Claude':'Check for updates';
+  $('claude-update-action').classList.toggle('primary',u.status==='available');
+  $('claude-auto-updates').checked=c.autoCheck!==false;
+  $('claude-update-checked').hidden=!u.checkedAt;$('claude-update-checked').textContent=u.checkedAt?`Last checked ${new Date(u.checkedAt).toLocaleString()}`:'';
+  if(u.status!=='available') $('claude-update-confirm').hidden=true;
+  if(ready) {$('claude-install-confirm').hidden=true;$('claude-panel-install-confirm').hidden=true;}
+  if(!installed&&!ready) {$('claude-report').hidden=true;$('claude-reload-confirm').hidden=true;$('claude-remove-confirm').hidden=true;}
+}
+function showClaudeConfirmation(name, trigger) {
+  for(const box of document.querySelectorAll('[id^="claude-"][id$="-confirm"]')) box.hidden=true;
+  $(`claude-${name}-confirm`).hidden=false;$(`claude-${name}-cancel`).focus();
+}
+function bindClaudeConfirmation(name, trigger, action) {
+  $(`claude-${name}-cancel`).onclick=()=>{$(`claude-${name}-confirm`).hidden=true;$(trigger).focus();};
+  $(`claude-${name}-yes`).onclick=async()=>{
+    claudeActionBusy=true;$(`claude-${name}-yes`).disabled=true;renderClaudeSettings();
+    try{const result=await command(action);if(result.ok){$(`claude-${name}-confirm`).hidden=true;if(action==='claude-refresh'||action==='remove-claude')$('claude-report').hidden=true;}}
+    finally{claudeActionBusy=false;$(`claude-${name}-yes`).disabled=false;renderClaudeSettings();if(!$(trigger).hidden)$(trigger).focus();}
+  };
+}
+function resetForm() { editing = null; $('rule-form').reset(); $('save-rule').textContent = 'Add'; $('cancel-edit').hidden = true; setWww(true); setSkipSSL(false); ipNote(); closeSuggestions(); }
 // www switch: the note names the second host name the rule will cover. core.cjs stores the rule under the bare domain.
 function wwwNote() {
   const domain = $('domain-input').value.trim().replace(/\.$/, '').toLowerCase();
   $('www-note').textContent = !www ? 'Only this exact name' : !domain ? 'Also sends the www name to this IP' : `Also sends ${domain.startsWith('www.') && domain.split('.').length > 2 ? domain.slice(4) : `www.${domain}`} to this IP`;
 }
+function setSkipSSL(on) { skipSSL = on; $('ssl-switch').classList.toggle('on', on); $('ssl-switch').setAttribute('aria-checked', String(on)); }
 function setWww(on) { www = on; $('www-switch').classList.toggle('on', on); $('www-switch').setAttribute('aria-checked', String(on)); wwwNote(); }
 // Server list: imported in Settings, offered by name in the IP field.
 const serverFor = ip => state.servers.find(server => server.ip === ip);
@@ -147,12 +205,13 @@ function closeSuggestions() { suggestions = []; suggestionTotal = 0; drawSuggest
 function chooseServer(server) { $('ip-input').value = server.ip; closeSuggestions(); ipNote(); }
 $('rule-form').onsubmit = async event => {
   event.preventDefault(); const existing = state.rules.find(r => r.domain === editing), typed = $('ip-input').value.trim();
-  const rule = { domain: $('domain-input').value, ip: state.servers.find(server => server.name.toLowerCase() === typed.toLowerCase())?.ip || typed, enabled: existing?.enabled ?? true, www };
+  const rule = { domain: $('domain-input').value, ip: state.servers.find(server => server.name.toLowerCase() === typed.toLowerCase())?.ip || typed, enabled: existing?.enabled ?? true, www, skipSSL };
   const rules = editing ? state.rules.map(r => r.domain === editing ? rule : r) : [...state.rules, rule];
-  const result = await command('save-rules', rules); if (result.ok) resetForm();
+  const result = await command('save-rules', rules); if (result.ok) { resetForm(); toast('Rule saved. Affected tabs reloaded.'); }
 };
 $('cancel-edit').onclick = resetForm;
 $('www-row').onclick = () => setWww(!www);
+$('ssl-row').onclick = () => setSkipSSL(!skipSSL);
 $('domain-input').oninput = wwwNote;
 $('ip-input').oninput = () => { suggestServers(); ipNote(); };
 $('ip-input').onfocus = suggestServers;
@@ -182,12 +241,14 @@ setWww(true);
 $('navigation').onsubmit = event => { event.preventDefault(); const url = $('address').value; $('address').blur(); command('navigate', url); };
 $('new-tab').onclick = () => command('new-tab'); $('domains').onclick = () => command('panel', state.panel === 'domains' ? null : 'domains'); $('close-panel').onclick = () => command('panel', null);
 $('welcome-domains').onclick = async () => { await command('panel', 'domains'); $('domain-input').focus(); };
-$('settings').onclick = () => command('panel', state.panel === 'settings' ? null : 'settings');
-$('open-updates').onclick = $('update-notice').onclick = () => command('panel', 'updates');
+$('settings').onclick = () => { settingsCategory = 'home'; command('panel', ['settings', 'updates'].includes(state.panel) ? null : 'settings'); };
+$('update-notice').onclick = () => openSettings('updates');
+document.querySelectorAll('[data-settings-category]').forEach(button => button.onclick = () => openSettings(button.dataset.settingsCategory));
+$('settings-back').onclick = () => openSettings('home');
 $('back').onclick = () => command('back'); $('forward').onclick = () => command('forward'); $('reload').onclick = () => command(state.tabs.find(t => t.id === state.activeId)?.loading ? 'stop' : 'reload'); $('retry').onclick = () => command('reload');
-$('apply').onclick = () => command('restart'); $('devtools').onclick = () => command('devtools');
-$('clear-cache').onclick = async () => { if ((await command('clear-cache')).ok) toast('Cache and DNS cache cleared, page reloaded. Cookies and logins were kept.'); };
-$('feed-form').onsubmit = event => { event.preventDefault(); command('update-settings', { feed: $('feed').value, automatic: $('auto-updates').checked }); };
+
+$('feed').oninput = () => { feedDirty = true; };
+$('feed-form').onsubmit = async event => { event.preventDefault(); const result = await command('update-settings', { feed: $('feed').value, automatic: $('auto-updates').checked }); if (result.ok) feedDirty = false; };
 $('auto-updates').onchange = () => command('update-settings', { feed: state.updateFeed, automatic: $('auto-updates').checked });
 $('check-update').onclick = () => command('check-update'); $('download-update').onclick = () => command('download-update'); $('install-update').onclick = () => command('install-update');
 window.browser.onState(render);
@@ -238,7 +299,7 @@ splitter.onpointermove = event => {
   if (!splitDrag) return;
   // A release that never arrived (button let go outside the window) ends the drag where it is.
   if (!event.buttons) return finishSplitDrag(false);
-  const width = window.innerWidth - (state.panel ? Math.min(480, Math.floor(window.innerWidth * .48)) : 0);
+  const width = Math.max(...state.paneLayout.map(pane => pane.banner.x + pane.banner.width));
   splitDrag.latest = share(event.clientX / width);
   // One layout per frame is enough; every step resizes two websites.
   if (!splitFrame) splitFrame = requestAnimationFrame(() => { splitFrame = 0; if (splitDrag) setShare(splitDrag.latest, false); });
@@ -256,7 +317,8 @@ document.addEventListener('keydown', event => { if (event.key === 'Escape' && sp
 document.querySelectorAll('[data-dock]').forEach(button => { button.onclick = () => command('devtools-layout', { dock: button.dataset.dock }); });
 let toolsDrag = null;
 function dragDock(event) {
-  const width = window.innerWidth - (state.panel ? Math.min(480, Math.floor(window.innerWidth * .48)) : 0);
+  const { page, tools } = state.toolsLayout;
+  const width = Math.max(page.x + page.width, tools.x + tools.width);
   return event.clientX < width * .25 ? 'left' : event.clientX > width * .75 ? 'right' : 'bottom';
 }
 for (const id of ['tools-grip', 'tools-splitter']) {
@@ -264,7 +326,9 @@ for (const id of ['tools-grip', 'tools-splitter']) {
   handle.onpointerdown = event => {
     if (event.button !== 0 || !state.toolsLayout) return;
     event.preventDefault(); handle.setPointerCapture(event.pointerId);
-    toolsDrag = { id, dock: state.devtoolsDock, ratio: state.devtoolsRatio, target: state.devtoolsDock, latestRatio: state.devtoolsRatio };
+    const bottom = state.devtoolsDock === 'bottom', bounds = state.toolsLayout;
+    const size = bottom ? bounds.tools.height + bounds.bar.height : bounds.tools.width;
+    toolsDrag = { id, dock: state.devtoolsDock, ratio: state.devtoolsRatio, target: state.devtoolsDock, latestRatio: state.devtoolsRatio, start: bottom ? event.clientY : event.clientX, size, total: size + (bottom ? bounds.page.height + bounds.splitter.height : bounds.page.width + bounds.splitter.width) };
     document.body.classList.toggle('tools-resizing', id === 'tools-splitter');
     command('devtools-drag', true);
   };
@@ -274,8 +338,8 @@ for (const id of ['tools-grip', 'tools-splitter']) {
       toolsDrag.target = dragDock(event);
       document.querySelectorAll('[data-drop]').forEach(node => node.classList.toggle('selected', node.dataset.drop === toolsDrag.target));
     } else {
-      const width = window.innerWidth - (state.panel ? Math.min(480, Math.floor(window.innerWidth * .48)) : 0);
-      const ratio = toolsDrag.dock === 'bottom' ? (window.innerHeight - 30 - event.clientY) / (window.innerHeight - 162) : toolsDrag.dock === 'right' ? (width - event.clientX) / width : event.clientX / width;
+      const delta = (toolsDrag.dock === 'bottom' ? event.clientY : event.clientX) - toolsDrag.start;
+      const ratio = (toolsDrag.size + delta * (toolsDrag.dock === 'left' ? 1 : -1)) / toolsDrag.total;
       toolsDrag.latestRatio = Math.max(.2, Math.min(.7, ratio));
       command('devtools-layout', { ratio: toolsDrag.latestRatio, commit: false });
     }
@@ -305,22 +369,35 @@ $('tools-splitter').onkeydown = event => {
 };
 
 $('claude').onclick = () => command('panel', state.panel === 'claude' ? null : 'claude');
-$('install-claude').onclick = () => command('install-claude');
-$('remove-claude').onclick = () => command('remove-claude');
+for (const [trigger, name, action] of [['install-claude', 'panel-install', 'install-claude'], ['settings-install-claude', 'install', 'install-claude'], ['remove-claude', 'remove', 'remove-claude'], ['claude-refresh', 'reload', 'claude-refresh']]) {
+  $(trigger).onclick = () => showClaudeConfirmation(name, trigger);
+  bindClaudeConfirmation(name, trigger, action);
+}
+bindClaudeConfirmation('update', 'claude-update-action', 'claude-install-update');
+$('claude-update-action').onclick = async () => {
+  if (state.claude.update?.status === 'available') return showClaudeConfirmation('update', 'claude-update-action');
+  claudeActionBusy = true; renderClaudeSettings();
+  try { await command('claude-check-update'); } finally { claudeActionBusy = false; renderClaudeSettings(); }
+};
+$('claude-auto-updates').onchange = async () => {
+  const result = await command('claude-update-settings', { autoCheck: $('claude-auto-updates').checked });
+  if (!result.ok) renderClaudeSettings();
+};
 $('claude-options').onclick = () => command('claude-options');
 $('claude-chat').onclick = () => command('panel', 'claude');
 
-$('claude-refresh').onclick = async () => { const result = await command('claude-refresh'); if (result.ok) $('claude-report').hidden = true; };
 $('claude-check').onclick = async () => {
-  $('claude-check').disabled = true;
+  claudeChecking = true; $('claude-check').disabled = true;
   try {
     const result = await command('claude-check');
     if (!result.ok) return;
     const d = result.diagnostics;
     $('claude-diagnostics').textContent = JSON.stringify(d, null, 2);
+    const rows = [['Extension', d.extensionVersion ? `Loaded · v${d.extensionVersion}` : 'Version unavailable'], ['Claude panel', d.interface === 'new' ? 'New interface detected' : d.interface === 'settings' ? 'Extension settings open' : 'Classic interface or loading'], ['Browser permission', d.browserPermissionAccepted ? 'Granted' : 'Not granted']];
+    $('claude-results').replaceChildren(...rows.map(([label, value]) => { const row = el('div', ''); row.append(el('span', '', label), el('strong', '', value)); return row; }));
     $('claude-report-summary').textContent = d.lastInterfaceSignal === 'cic_sidepanel_cowork_unavailable' ? 'Claude reported that the new interface is unavailable and fell back to classic.' : d.interface === 'new' ? 'The new Claude interface is selected. Its load status is shown below.' : d.newInterfaceEnabled === true ? 'The new interface is enabled in the cached settings, but is not currently displayed.' : d.newInterfaceEnabled === false ? 'The cached Claude settings disable the new interface. Try Refresh Claude, then check again.' : 'No interface setting is available yet. Open Claude, finish signing in, then check again.';
     $('claude-report').hidden = false;
-  } finally { $('claude-check').disabled = false; }
+  } finally { claudeChecking = false; renderClaudeSettings(); }
 };
 $('claude-copy-diagnostics').onclick = async () => { const result = await command('claude-copy-diagnostics'); if (result.ok) toast('Claude diagnostics copied.'); };
 
@@ -350,8 +427,8 @@ function renderWorkspace() {
   const marked=state.library.bookmarks.some(b=>b.url===tab?.url);
   $('bookmark').classList.toggle('on',marked); $('bookmark').setAttribute('aria-label',marked?'Remove bookmark':'Bookmark page');
   $('bookmark').disabled=!/^https?:/.test(tab?.url || '');
-  $('ssl-verification').checked=state.sslVerification; $('apply-ssl').disabled=!state.pending;
-  $('footer-note').textContent=`by SolutionMAX · SSL checks ${state.activeSSL?'on':'off for migration sites'}`;
+
+  $('footer-note').textContent='by SolutionMAX';
   renderPerformance(state.performance);
   $('find-bar').hidden=!state.find.open;
   $('find-count').textContent=state.find.text ? `${state.find.active} / ${state.find.matches}` : '';
@@ -362,8 +439,8 @@ function renderWorkspace() {
   if(state.comparison) for(const pane of state.paneLayout) {
     const t=state.tabs.find(t=>t.id===pane.id);if(!t) continue;
     const selected=t.id===state.activeId;
-    const isRight=t.id===state.comparison.live, peer=isRight?left:right;
-    const bar=isRight && (compareWith!==null || t.startPage) ? compareWithBar(t) : routeBar(t,{pane:true,selected,peer,other:isRight?otherSite:undefined});place(bar,pane.banner);bar.classList.toggle('compact',pane.banner.width<800);bar.classList.add(isRight?'pane-right':'pane-left');$('pane-bars').append(bar);
+    const isRight=t.id===state.comparison.live;
+    const bar=routeBar(t,{pane:true,selected,other:isRight?otherSite:undefined});place(bar,pane.banner);bar.classList.toggle('route-wrap',pane.banner.height>48);bar.classList.toggle('route-stack',pane.banner.width<=300);bar.classList.add(isRight?'pane-right':'pane-left');$('pane-bars').append(bar);
     if(t.error) {
       const error=el('div','comparison-error');place(error,pane.page);
       error.append(el('h2','',`${t.route.label} could not load`),el('p','',t.url),el('code','',t.error));
@@ -376,33 +453,51 @@ function renderWorkspace() {
   renderSplitter();
   // The bars are rebuilt on every state update: keep the caret, and put it in the field when the field first shows.
   const field=$('compare-with');
-  if(field && caret) { if(document.hasFocus()) { field.focus(); field.setSelectionRange(...caret); } } else if(field && !oldField) { field.focus(); field.select(); }
+  if(field && caret) { if(document.hasFocus()) { field.focus(); field.setSelectionRange(...caret); } } else if(field && !oldField && right?.startPage) { field.focus(); field.select(); }
   // Closing the field hands the focus back to the button that opened it.
-  if(compareWithClosed) { compareWithClosed=false; if(!field) document.querySelector('#pane-bars button.with')?.focus(); }
+  if(compareWithClosed) { compareWithClosed=false; field?.blur(); }
   renderDifferences(tab, view);
   renderLibrary();
 }
 function renderLibrary() {
   const downloads=new Map(state.library.downloads.map(d=>[d.id,d]));for(const d of state.downloads)downloads.set(d.id,d);
-  const entries=libraryTab==='downloads'?[...downloads.values()].reverse():state.library[libraryTab];
-  const key=JSON.stringify([libraryTab,entries]);if(key===libraryKey)return;libraryKey=key;
-  document.querySelectorAll('[data-library]').forEach(n=>n.classList.toggle('selected',n.dataset.library===libraryTab));
-  $('clear-library').hidden=libraryTab==='bookmarks';$('clear-library').textContent=libraryTab==='history'?'Clear history':'Clear finished downloads';
+  const all=libraryTab==='downloads'?[...downloads.values()].reverse():state.library[libraryTab];
+  const query=librarySearch.trim().toLocaleLowerCase(), entries=all.filter(entry=>[entry.title,entry.name,entry.url].some(value=>String(value||'').toLocaleLowerCase().includes(query)));
+  const today=new Date().toDateString(), yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);
+  const key=JSON.stringify([libraryTab,entries,query,today]);if(key===libraryKey)return;libraryKey=key;
+  document.querySelectorAll('[data-library]').forEach(n=>{n.classList.toggle('selected',n.dataset.library===libraryTab);n.setAttribute('aria-pressed',String(n.dataset.library===libraryTab));});
+  $('library-search').placeholder=`Search ${libraryTab}…`;
+  $('clear-library').hidden=libraryTab==='bookmarks';$('clear-library').textContent=libraryTab==='history'?'Clear history…':'Clear finished…';
+  $('reopen-tab').hidden=libraryTab==='downloads';$('library-local-note').hidden=libraryTab!=='bookmarks';
+  const focused=document.activeElement?.dataset.libraryAction;
   $('library-list').replaceChildren();
-  if(!entries.length)$('library-list').append(el('p','empty',`No ${libraryTab} yet.`));
+  if(!entries.length){const empty=el('div','library-empty');empty.append(el('h4','',query?'No results':`No ${libraryTab} yet.`),el('p','',query?'Try another title or website address.':libraryTab==='bookmarks'?'Save a page with the star in the address bar.':libraryTab==='history'?'Pages you visit appear here.':'Downloads appear here when you save a file.'));$('library-list').append(empty);}
+  const groups=new Map();
   for(const entry of entries){
-    const row=el('div','library-entry');
-    if(libraryTab==='downloads'){
-      row.append(el('strong','',entry.name),el('p','',`${entry.state}${entry.paused?' · paused':''} · ${(entry.received/1048576).toFixed(1)} / ${entry.total?(entry.total/1048576).toFixed(1):'?'} MB`));
-      if(entry.state==='progressing'){const progress=el('progress','');if(entry.total){progress.max=entry.total;progress.value=entry.received;}row.append(progress);}
-      for(const [action,label] of entry.state==='completed'?[['show','Show in folder']]:entry.state==='progressing'||entry.canResume?[...(entry.paused||entry.state==='interrupted'?(entry.canResume?[['resume','Resume']]:[]):[['pause','Pause']]),['cancel','Cancel']]:[]){const b=el('button','',label);b.onclick=()=>command('download-action',{id:entry.id,action});row.append(b);}
-    } else {
-      const open=el('button','library-link',entry.title||entry.url);open.onclick=()=>command('new-tab',entry.url);row.append(open,el('p','',entry.url));
-      if(libraryTab==='bookmarks'){const remove=el('button','','Remove');remove.onclick=()=>command('remove-bookmark',entry.url);row.append(remove);}
-      else row.append(el('small','',new Date(entry.visitedAt).toLocaleString()));
-    }
-    $('library-list').append(row);
+    const date=new Date(entry.visitedAt);
+    const group=libraryTab==='bookmarks'?'Saved pages':libraryTab==='history'?(date.toDateString()===today?'Today':date.toDateString()===yesterday.toDateString()?'Yesterday':date.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})):entry.state==='completed'?'Completed':entry.state==='cancelled'?'Cancelled':entry.state==='interrupted'?'Interrupted':'In progress';
+    if(!groups.has(group))groups.set(group,[]);groups.get(group).push(entry);
   }
+  for(const [group,items] of groups){
+    $('library-list').append(el('h4','library-group',group));
+    for(const entry of items){
+      const download=libraryTab==='downloads', title=download?entry.name:entry.title||entry.url;
+      const row=el('div','library-entry'), icon=el('span','library-favicon',download?'↓':title.slice(0,1).toUpperCase()), content=el('div','library-content');icon.setAttribute('aria-hidden','true');row.append(icon,content);
+      const heading=el(download?'strong':'button','library-link',title);heading.title=title;content.append(heading);
+      if(!download){heading.dataset.libraryAction=`open:${entry.url}`;heading.onclick=()=>command('new-tab',entry.url);}
+      const meta=el('p','',download?`${(entry.received/1048576).toFixed(1)} / ${entry.total?(entry.total/1048576).toFixed(1):'?'} MB`:entry.url);meta.title=meta.textContent;content.append(meta);
+      if(download){
+        if(entry.state==='progressing'){const progress=el('progress','');progress.setAttribute('aria-label',`Download progress for ${title}`);if(entry.total){progress.max=entry.total;progress.value=entry.received;}content.append(progress);}
+        content.append(el('p','',entry.paused?'Paused':entry.state==='progressing'?'Downloading':entry.state==='interrupted'?(entry.canResume?'Interrupted · can resume':'Interrupted'):entry.state==='cancelled'?'Cancelled':'Completed'));
+        const actions=entry.state==='completed'?[['show','Show in folder','folder']]:entry.state==='progressing'||entry.canResume?[...(entry.paused||entry.state==='interrupted'?(entry.canResume?[['resume','Resume download','play']]:[]):[['pause','Pause download','pause']]),['cancel','Cancel download','close']]:[];
+        for(const [action,label,symbol] of actions){const button=el('button','library-action');setIcon(button,symbol);button.title=label;button.setAttribute('aria-label',action==='show'?`Show ${title} in folder`:`${label} ${title}`);button.dataset.libraryAction=`${action}:${entry.id}`;button.onclick=()=>command('download-action',{id:entry.id,action});row.append(button);}
+      }else if(libraryTab==='bookmarks'){
+        const remove=el('button','library-action');setIcon(remove,'trash');remove.title='Remove bookmark';remove.setAttribute('aria-label',`Remove bookmark ${title}`);remove.dataset.libraryAction=`remove:${entry.url}`;remove.onclick=()=>command('remove-bookmark',entry.url);row.append(remove);
+      }else{const time=el('time','',new Date(entry.visitedAt).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}));time.dateTime=new Date(entry.visitedAt).toISOString();time.title=new Date(entry.visitedAt).toLocaleString();row.append(time);}
+      $('library-list').append(row);
+    }
+  }
+  if(focused) [...$('library-list').querySelectorAll('[data-library-action]')].find(node=>node.dataset.libraryAction===focused)?.focus({preventScroll:true});
 }
 $('compare').onclick=()=>command(currentView()==='compare'?'stop-compare':'compare');
 $('view-single').onclick=()=>currentView()==='compare'?command('stop-compare'):currentView()==='differences'?command('view','single'):0;
@@ -415,7 +510,7 @@ $('view-differences').onclick=async()=>{
 };
 $('clear-site-data').onclick=async()=>{ if((await command('clear-site-data')).ok) toast('Site data cleared for this site.'); };
 $('open-release').onclick=$('release-page').onclick=()=>command('open-release');
-$('footer-version').onclick=()=>command('panel','updates');
+$('footer-version').onclick=()=>openSettings('updates');
 $('bookmark').onclick=()=>command('bookmark');
 $('library').onclick=$('open-library').onclick=()=>command('panel','library');
 $('open-find').onclick=()=>command('find-open');
@@ -425,15 +520,30 @@ $('find-next').onclick=()=>command('find',{text:$('find-input').value,forward:tr
 $('find-prev').onclick=()=>command('find',{text:$('find-input').value,forward:false});
 $('find-close').onclick=()=>command('find-close');
 window.browser.onFocusFind(()=>{$('find-input').focus();$('find-input').select();});
-$('ssl-verification').onchange=()=>command('ssl-verification',$('ssl-verification').checked);
+$('manage-ssl').onclick=()=>command('panel','domains');
 $('reopen-tab').onclick=()=>command('reopen-tab');
-$('clear-library').onclick=()=>command(libraryTab==='history'?'clear-history':'clear-downloads');
-document.querySelectorAll('[data-library]').forEach(b=>b.onclick=()=>{libraryTab=b.dataset.library;renderLibrary();});
+$('library-search').oninput=()=>{librarySearch=$('library-search').value;renderLibrary();};
+$('clear-library').onclick=()=>{
+  $('clear-library-message').textContent=libraryTab==='history'?'Remove the saved history on this device?':'Remove finished entries? Downloaded files stay on your device.';
+  $('clear-library-confirm').hidden=false;$('clear-library-cancel').focus();
+};
+$('clear-library-cancel').onclick=()=>{$('clear-library-confirm').hidden=true;$('clear-library').focus();};
+$('clear-library-yes').onclick=async()=>{
+  $('clear-library-yes').disabled=true;
+  try { if((await command(libraryTab==='history'?'clear-history':'clear-downloads')).ok){$('clear-library-confirm').hidden=true;$('clear-library').focus();} }
+  finally { $('clear-library-yes').disabled=false; }
+};
+document.querySelectorAll('[data-library]').forEach(b=>b.onclick=()=>{libraryTab=b.dataset.library;librarySearch='';$('library-search').value='';$('clear-library-confirm').hidden=true;renderLibrary();});
 
-$('apply-ssl').onclick=()=>command('restart');
+
 
 /* View state, route bars and the Differences view. All dynamic text uses textContent. */
 const ICONS = {
+  trash: '<path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/>',
+  folder: '<path d="M3 5h7l2 3h9v12H3z"/>',
+  pause: '<path d="M8 5v14M16 5v14"/>',
+  play: '<path d="m7 4 13 8-13 8z"/>',
+  close: '<path d="m6 6 12 12M6 18 18 6"/>',
   reload: '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
   stop: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
@@ -444,11 +554,13 @@ const ICONS = {
   info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   chevron: '<path d="m6 9 6 6 6-6"/>',
+  sliders: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="17" r="2"/>',
   pen: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>'
 };
 function icon(name) { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.innerHTML = ICONS[name]; return svg; }
 function setIcon(node, name) { if (node.dataset.icon === name) return; node.dataset.icon = name; node.replaceChildren(icon(name)); }
 const HOW = {
+  beta: ['Local beta updates', ['This private beta does not contact a public update feed.', 'Get the next beta from the person who supplied this build.', 'Quit Dioptra, replace the app in Applications, then reopen it. Your saved profile is kept.'], 'Use the download for your Mac: Apple Silicon (arm64) or Intel (x64).'],
   general: ['How updates work', ['Dioptra checks GitHub for a new release at start and every 4 hours.', 'You see it in the footer and at the top right. Nothing installs by itself.', 'You choose when. Tabs and domain rules come back after the restart.'], ''],
   manual: ['How to update on macOS', ['Open the download page and get the zip for your Mac: Apple Silicon or Intel.', 'Quit Dioptra and drag the new app over the old one in Applications.', 'Open it. Rules, tabs and logins are kept.'], 'The Mac build is not notarized yet, so it cannot replace itself.'],
   auto: ['How to update', ['Click Download update. The file is checked against its checksum and, on macOS, its signature.', 'Click Install and restart when it suits you.', 'Dioptra reopens on the new version with your tabs.'], '']
@@ -457,22 +569,78 @@ let howKey = '';
 function renderUpdateDetails() {
   const u = state.update, updating = ['available', 'downloading', 'downloaded'].includes(u.status), installed = `v${state.versions.app}`;
   $('update-card').className = `update-card ${u.status === 'downloaded' ? 'green' : updating ? 'blue' : u.status === 'error' ? 'red' : ''}`;
-  $('update-title').textContent = { available: 'New version', downloading: 'Downloading', downloaded: 'Ready to install', error: 'Update could not be completed', checking: 'Checking' }[u.status] || 'Installed';
+  $('update-title').textContent = { 'private-beta': 'Private beta · local testing', available: 'New version', downloading: 'Downloading', downloaded: 'Ready to install', error: 'Update could not be completed', checking: 'Checking' }[u.status] || 'Installed';
   $('update-version').textContent = updating && u.version ? `${installed} → v${u.version}` : `Dioptra ${installed}`;
   const released = updating && u.date && !Number.isNaN(Date.parse(u.date)) ? new Date(u.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
   const pill = u.status === 'current' ? 'up to date' : released;
   $('update-pill').hidden = !pill; $('update-pill').textContent = pill; $('update-pill').className = `pill-s ${u.status === 'current' ? 'g' : 'b'}`;
   const checked = u.checkedAt ? `Last checked ${new Date(u.checkedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : '';
   $('update-message').textContent = u.status === 'current' && checked ? `${checked} · ${state.autoUpdates ? 'checks again every 4 hours' : 'automatic checks are off'}` : u.message;
-  const key = !updating ? 'general' : u.canInstall === false ? 'manual' : 'auto';
+  const key = state.privateBeta ? 'beta' : !updating ? 'general' : u.canInstall === false ? 'manual' : 'auto';
   if (key !== howKey) { howKey = key; const [title, steps, hint] = HOW[key]; $('how-title').textContent = title; $('how-steps').replaceChildren(...steps.map(step => el('li', '', step))); $('how-hint').textContent = hint; $('how-hint').hidden = !hint; }
   const footer = $('footer-version');
   footer.className = u.status === 'downloaded' ? 'ready' : updating ? 'new' : '';
   footer.textContent = u.status === 'downloaded' ? `v${u.version} ready · restart to update` : updating && u.version ? `Dioptra ${installed} · v${u.version} available` : `Dioptra ${installed}`;
 }
 function currentView() { return state.view || (state.comparison ? 'compare' : 'single'); }
-function withIcon(className, name, text) { const n = el('span', className); n.append(icon(name), text); return n; }
-function kv(label, value, className = 'v') { const n = el('span', 'kv'); n.append(el('span', 'k', label), el('span', className, value)); return n; }
+let onboardingBusy = false, onboardingStep = -1, onboardingServers = '';
+function renderOnboarding() {
+  const setup = state.onboarding, dialog = $('onboarding-dialog');
+  if (!setup.open) { if (dialog.open) dialog.close(); return; }
+  if (!dialog.open && setup.step === 0) {
+    $('onboarding-domain').value = ''; $('onboarding-ip').value = '';
+    $('onboarding-www').checked = true; $('onboarding-ssl').checked = false;
+    $('onboarding-error').hidden = true;
+  }
+  $('onboarding-install-help').textContent = state.platform === 'darwin'
+    ? 'Open the DMG and drag Dioptra into Applications. For a ZIP, unzip it and move Dioptra.app into Applications. Quit older copies before opening it. If macOS asks for permission to open the app, see Apple’s instructions below.'
+    : state.platform === 'win32' ? 'Use the installer supplied with your Windows download, then open Dioptra from the Start menu. This setup screen does not install the app.'
+    : 'For an AppImage download, make the file executable in its file properties, then open it. This setup screen does not install the app.';
+  $('installation-help').hidden = state.platform !== 'darwin';
+  $('onboarding-title').textContent = ['Install Dioptra', 'Your first domain', 'Ready to browse'][setup.step];
+  document.querySelectorAll('.onboarding-steps li').forEach((item,index)=>{item.classList.toggle('current',index===setup.step);if(index===setup.step)item.setAttribute('aria-current','step');else item.removeAttribute('aria-current');});
+  $('onboarding-install').hidden = setup.step !== 0; $('onboarding-domain-form').hidden = setup.step !== 1; $('onboarding-ready').hidden = setup.step !== 2;
+  $('onboarding-back').hidden = setup.step !== 1; $('onboarding-skip').hidden = setup.step !== 1;
+  $('onboarding-next').hidden = setup.step === 2; $('onboarding-next').textContent = setup.step === 0 ? 'Continue' : 'Save domain';
+  $('onboarding-finish').hidden = setup.step !== 2; $('onboarding-finish').textContent = setup.url ? 'Open website' : 'Finish setup';
+  $('onboarding-ready-message').textContent = setup.url ? `${setup.url} is mapped to your saved server. Open it to test the site. Certificate errors may still appear when SSL checks are on.` : 'You skipped the first domain. Add a rule from Domains whenever you are ready.';
+  for (const id of ['onboarding-next','onboarding-skip','onboarding-finish','onboarding-back','onboarding-cancel']) $(id).disabled = onboardingBusy;
+  const servers = JSON.stringify(state.servers);
+  if (servers !== onboardingServers) { onboardingServers = servers; const blank=el('option','','Select a server…');blank.value='';$('onboarding-server').replaceChildren(blank,...state.servers.map(server=>{const option=el('option','',`${server.name} · ${server.ip}`);option.value=server.ip;return option;})); }
+  $('onboarding-server-label').hidden = !state.servers.length;
+  if (!dialog.open) dialog.showModal();
+  if (onboardingStep !== setup.step) { onboardingStep = setup.step; $('onboarding-error').hidden=true; if(setup.step===1)$('onboarding-domain').focus();else if(setup.step===2)$('onboarding-finish').focus(); }
+}
+async function setupCommand(action,data) {
+  if (onboardingBusy) return;
+  onboardingBusy=true; $('onboarding-error').hidden=true; renderOnboarding();
+  try {
+    const result=await window.browser.command(action,data);
+    if(!result.ok){$('onboarding-error').textContent=result.error;$('onboarding-error').hidden=false;}
+    return result;
+  } catch(error) { $('onboarding-error').textContent=error.message;$('onboarding-error').hidden=false; }
+  finally { onboardingBusy=false; renderOnboarding(); }
+}
+function nextSetup(event) {
+  event.preventDefault();
+  return state.onboarding.step===0 ? setupCommand('onboarding-step',1) : setupCommand('onboarding-domain',{domain:$('onboarding-domain').value,ip:$('onboarding-ip').value,www:$('onboarding-www').checked,skipSSL:$('onboarding-ssl').checked});
+}
+$('open-onboarding').onclick=()=>command('onboarding-open');
+$('onboarding-next').onclick=nextSetup; $('onboarding-domain-form').onsubmit=nextSetup;
+$('onboarding-back').onclick=()=>setupCommand('onboarding-step',0);
+$('onboarding-skip').onclick=()=>setupCommand('onboarding-domain',null);
+$('onboarding-finish').onclick=()=>setupCommand('onboarding-finish');
+$('onboarding-cancel').onclick=()=>setupCommand('onboarding-cancel');
+$('onboarding-dialog').addEventListener('cancel',event=>{event.preventDefault();setupCommand('onboarding-cancel');});
+$('installation-help').onclick=()=>command('installation-help');
+$('onboarding-import').onclick=()=>$('onboarding-file').click();
+$('onboarding-server').onchange=()=>{if($('onboarding-server').value)$('onboarding-ip').value=$('onboarding-server').value;};
+$('onboarding-file').onchange=async()=>{
+  const file=$('onboarding-file').files[0];$('onboarding-file').value='';if(!file)return;
+  if(file.size>MAX_SERVER_CSV){$('onboarding-error').textContent='This file is too large for a server list.';$('onboarding-error').hidden=false;return;}
+  const result=await setupCommand('import-servers',await file.text());
+  if(result?.ok)$('onboarding-import-status').textContent=`${result.imported} servers imported${result.skipped ? ` · ${result.skipped} rows skipped` : ''}.`;
+};
 const bareIP = ip => String(ip || '').replace(/^\[|\]$/g, '').replace(/^::ffff:/, '');
 function formatMs(ms) { return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`; }
 // Any click in the window UI outside the button closes the certificate card; the button itself toggles it.
@@ -480,96 +648,50 @@ function formatMs(ms) { return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${M
 function toggleCard(button) { const r = button.getBoundingClientRect(); command('card', { kind: button.dataset.card, id: Number(button.dataset.tab) || 0, right: r.right, bottom: r.bottom }); }
 document.addEventListener('pointerdown', event => { const button = event.button === 0 && event.target.closest?.('[data-card]'); if (button) toggleCard(button); else command('card-close'); }, true);
 document.addEventListener('click', event => { const button = event.detail === 0 && event.target.closest?.('[data-card]'); if (button) toggleCard(button); });
-// Platform and PHP of the site in one chip; in Compare the parts that differ from the other pane are marked.
-function siteChip(t, peer) {
-  const s = t.site; if (!s || t.loading || t.error) return null;
-  const button = el('button', 'site-btn'); button.type = 'button'; button.dataset.card = 'site'; button.dataset.tab = t.id; button.setAttribute('aria-haspopup', 'dialog');
-  const value = el('span', 'site-v'), other = peer?.site;
-  const part = (name, version, differs) => { if (value.childNodes.length) value.append(' · '); value.append(name); if (version) { value.append(' '); value.append(el('small', differs ? 'differs' : '', version)); } };
-  if (s.platform) part(s.platform, s.version, Boolean(other?.platform) && (other.platform !== s.platform || other.version !== s.version));
-  if (s.php) part('PHP', s.php, Boolean(other?.php) && other.php !== s.php);
-  button.append(el('span', 'k', 'Site'), value);
-  button.setAttribute('aria-label', `Site runs on ${value.textContent}, show details`);
-  return button;
+// Site info is available even when the page exposes no platform metadata.
+function siteChip(t) {
+  const button = el('button', 'site-btn'); button.type = 'button'; button.dataset.card = 'site'; button.dataset.tab = t.id;
+  button.append(icon('info'), el('span', 'action-label', 'Site info'), icon('chevron'));
+  button.setAttribute('aria-label', 'Site info'); button.setAttribute('aria-haspopup', 'dialog'); return button;
 }
-// Opens the DNS card. Nothing is looked up until it is clicked.
 function dnsButton(t) {
-  const button = el('button', 'dns-btn', 'DNS'); button.type = 'button';
-  const chevron = icon('chevron'); chevron.classList.add('chev'); button.append(chevron);
+  const button = el('button', 'dns-btn'); button.type = 'button'; button.append(icon('sliders'), el('span', 'action-label', 'DNS'));
   button.title = `DNS records of ${t.route.host}`; button.setAttribute('aria-label', `Show DNS records of ${t.route.host}`); button.setAttribute('aria-haspopup', 'dialog');
-  button.dataset.card = 'dns'; button.dataset.tab = t.id;
-  return button;
+  button.dataset.card = 'dns'; button.dataset.tab = t.id; return button;
 }
-function certButton(t) {
-  const button = el('button', 'ok cert-btn'); button.type = 'button';
-  const chevron = icon('chevron'); chevron.classList.add('chev');
-  button.append(icon('check'), el('span', 'cert-text', 'Certificate valid'), chevron);
-  button.setAttribute('aria-label', 'Certificate valid, show issuer and expiry date'); button.setAttribute('aria-haspopup', 'dialog');
-  button.dataset.card = 'cert'; button.dataset.tab = t.id;
-  return button;
-}
-// Compare with another URL: the draft address while the field in the right pane bar is open (null = closed).
 let compareWith = null, compareWithError = '', compareWithClosed = false;
 function closeCompareWith() { compareWith = null; compareWithError = ''; compareWithClosed = true; renderWorkspace(); }
 async function submitCompareWith(value) {
   let result; try { result = await window.browser.command('compare-with', value); } catch (error) { result = { ok: false, error: error.message }; }
   if (result.ok) return closeCompareWith();
-  compareWithError = result.error || 'That address could not be opened.';
-  renderWorkspace();
+  compareWithError = result.error || 'That address could not be opened.'; renderWorkspace();
 }
-// The right pane bar as a form. An empty right pane has nothing to go back to, so there it cannot be closed.
 function compareWithBar(t) {
-  const bar = el('form', `route-bar editing${t.startPage ? '' : ' live'}`);
-  const label = el('label', '', 'Compare with'), input = el('input', ''), go = el('button', 'with-go', 'Go');
-  label.htmlFor = input.id = 'compare-with'; input.value = compareWith ?? ''; input.placeholder = 'https://'; input.spellcheck = false; input.autocomplete = 'off';
-  input.oninput = () => { compareWith = input.value; };
-  input.onkeydown = event => { if (event.key === 'Escape' && !t.startPage) closeCompareWith(); };
-  bar.onsubmit = event => { event.preventDefault(); submitCompareWith(input.value); };
-  if (!t.startPage) bar.append(el('span', 'badge', 'LIVE'));
-  bar.append(label, input);
-  if (compareWithError) { const error = el('span', 'with-error', compareWithError); error.id = 'compare-with-error'; error.setAttribute('role', 'alert'); input.setAttribute('aria-invalid', 'true'); input.setAttribute('aria-describedby', error.id); bar.append(error); }
-  bar.append(go);
-  if (!t.startPage) { const same = el('button', '', 'Same URL'); same.type = 'button'; same.title = 'Back to the same URL as the left pane'; same.onclick = () => submitCompareWith(null); const cancel = el('button', '', 'Cancel'); cancel.type = 'button'; cancel.onclick = closeCompareWith; bar.append(same, cancel); }
-  return bar;
+  const form = el('form', 'inline-compare-form'), label = el('label', '', 'Compare with'), input = el('input', ''), go = el('button', 'with-go', 'Go');
+  label.htmlFor = input.id = 'compare-with'; input.value = compareWith ?? (t.startPage ? '' : t.url); input.placeholder = 'https://'; input.spellcheck = false; input.autocomplete = 'off';
+  input.setAttribute('aria-label', 'Compare with URL'); input.title = 'Click to edit or paste another URL';
+  input.onclick = () => { if (compareWith === null) input.select(); }; input.oninput = () => { compareWith = input.value; };
+  input.onkeydown = event => { if (event.key === 'Escape') { event.preventDefault(); closeCompareWith(); } };
+  form.onsubmit = event => { event.preventDefault(); submitCompareWith(input.value); };
+  form.append(label, input);
+  if (compareWithError) { const error = el('span', 'with-error', compareWithError); error.id = 'compare-with-error'; error.setAttribute('role', 'alert'); input.setAttribute('aria-invalid', 'true'); input.setAttribute('aria-describedby', error.id); input.title = compareWithError; form.append(error); }
+  const same = el('button', '', 'Same URL'); same.type = 'button'; same.title = 'Back to the same URL as the left pane'; same.onclick = () => submitCompareWith(null); form.append(go, same); return form;
 }
-function routeBar(t, { pane = false, selected = false, peer = null, other } = {}) {
-  const label = t.route.label === 'HOSTFILE' ? 'Hostfile' : t.route.label === 'LIVE' ? 'Live' : t.route.label;
-  const bar = el('div', `route-bar ${t.route.label.toLowerCase()}${selected ? ' active' : ''}`);
-  const badge = pane ? el('button', 'badge', t.route.label) : el('span', 'badge', t.route.label);
-  if (pane) { badge.setAttribute('aria-pressed', String(selected)); badge.setAttribute('aria-label', `${label} pane${t.route.host ? ` for ${t.route.host}` : ''}${selected ? ', selected' : ''}`); badge.onclick = () => command('activate', t.id); }
-  if (other === undefined) bar.append(badge, el('span', 'route-domain', t.route.host || 'New tab'));
-  else {
-    // The address of the right pane in Compare opens the Compare with field. On pointerdown, as the bar can be rebuilt between press and release.
-    const swap = el('button', `with${other ? ' other' : ''}`), open = () => { compareWith = t.url; compareWithError = ''; renderWorkspace(); };
-    swap.type = 'button'; swap.title = 'Compare with another URL'; swap.setAttribute('aria-label', `Compare with another URL, now ${t.route.host}`);
-    swap.append(el('span', '', t.route.host || 'New tab'), icon('pen'));
-    swap.onpointerdown = event => { if (event.button === 0) { event.preventDefault(); open(); } }; swap.onclick = event => { if (event.detail === 0) open(); };
-    bar.append(badge, swap);
-  }
-  if (t.route.dns) bar.append(dnsButton(t));
-  if (t.route.configured) { const rule = kv('Rule', t.route.configured); rule.classList.add('rule'); bar.append(rule); }
-  const ips = bareIP(t.connection?.ip), fromCache = t.connection?.fromCache;
-  const measured = t.loading ? 'Connecting…' : t.error ? 'Not connected' : fromCache ? 'Cached · IP not measured' : ips ? ips : 'IP not available';
-  const connected = kv(t.route.label === 'LIVE' ? 'Live' : 'Connected', measured); connected.classList.add('conn');
-  const ptr = ips && !t.loading && !t.error && !fromCache ? t.connection?.hostname : '';
-  if (ptr) { const name = el('span', 'ptr', ptr); name.title = `Reverse DNS (PTR) of ${ips}: ${ptr}`; connected.append(name); }
-  if (ips && !t.loading && !t.error && t.route.configured) {
-    const match = ips.split(',').map(s => bareIP(s.trim())).includes(bareIP(t.route.configured));
-    connected.append(withIcon(match ? 'ok' : 'bad', match ? 'check' : 'x', match ? 'match' : 'mismatch'));
-  }
-  bar.append(connected);
-  const right = el('span', 'route-right');
-  const ssl = t.route.ssl, secure = t.url.startsWith('https:');
-  const chip = siteChip(t, peer); if (chip) right.append(chip);
-  if (t.error) right.append(withIcon('bad', 'alert', el('span', 'cert-text', /CERT|SSL/i.test(t.error) ? 'Strict certificate error' : 'Load error')));
-  else if (secure) right.append(ssl === 'SSL checks off' ? withIcon('warn', 'shield', el('span', 'cert-text', 'Certificate check skipped')) : t.route.cert ? certButton(t) : withIcon('ok', 'check', el('span', 'cert-text', 'Certificate valid')));
-  else if (t.url !== 'about:blank') right.append(withIcon('warn', 'info', el('span', 'cert-text', 'No TLS')));
-  const status = t.connection?.status ?? t.connection?.statusCode, ms = t.connection?.ms ?? t.connection?.time;
-  if (status) right.append(kv('HTTP', Number.isFinite(ms) ? `${status} · ${formatMs(ms)}` : String(status)));
-  bar.append(right);
-  const source = t.connection?.source === 'active server connections' ? 'Observed server connections for this host and port. Multiple IPs may be shown.' : 'Server IP observed for this page response. Cached pages may have no network connection.';
-  const details = `${label} · ${t.route.host || 'New tab'}${t.route.configured ? `\nHostfile IP ${t.route.configured}` : ''}\n${measured}${ptr ? ` · ${ptr}` : ''} · ${ssl}\n${source}`;
-  bar.title = details; badge.setAttribute('aria-description', details);
+function routeBar(t, { pane = false, selected = false, other } = {}) {
+  const label = t.route.label === 'HOSTFILE' ? 'New server' : 'Live', cached = Boolean(t.connection?.fromCache);
+  const bar = el('div', `route-bar ${t.route.label.toLowerCase()}${selected ? ' active' : ''}${cached ? ' cached' : ''}`);
+  const identity = el('div', 'route-identity'), badge = el(pane ? 'button' : 'span', 'badge', label);
+  if (pane) { badge.type='button'; badge.setAttribute('aria-pressed', String(selected)); badge.setAttribute('aria-label', `${label} pane${t.route.host ? ` for ${t.route.host}` : ''}${selected ? ', selected' : ''}`); badge.onclick = () => command('activate', t.id); }
+  identity.append(badge);
+  if (cached) { const cache = el('button', 'route-cache', 'Cached'); cache.type='button'; cache.dataset.card='cache'; cache.dataset.tab=t.id; cache.setAttribute('aria-haspopup','dialog'); identity.append(cache); }
+  const ips = !cached && !t.error && !t.loading ? bareIP(t.connection?.ip) : '';
+  const measured = t.startPage ? 'Ready to browse' : t.loading ? 'Connecting…' : ips || (cached ? 'IP · Not measured' : 'Not measured');
+  identity.append(el('span', 'route-ip', measured));
+  if (ips && t.connection?.hostname) { const ptr=el('span','ptr',t.connection.hostname);ptr.title=`Reverse DNS (PTR) of ${ips}: ${ptr.textContent}`;identity.append(ptr); }
+  bar.append(identity);
+  if (other !== undefined) bar.append(compareWithBar(t));
+  const actions = el('span', 'route-right'); if (t.route.dns) actions.append(dnsButton(t)); actions.append(siteChip(t));
+  bar.append(actions); bar.title = `${label} · ${t.route.host || 'New tab'}${t.route.configured ? ` · Rule ${t.route.configured}` : ''} · ${measured}`;
   return bar;
 }
 function renderRouteBar(tab, view) {
@@ -578,8 +700,6 @@ function renderRouteBar(tab, view) {
   bar.hidden = view === 'compare' && state.routeBarHeight === 0;
   if (view === 'compare') { bar.classList.add('idle'); bar.append(el('span', 'route-domain', 'Comparing Hostfile and Live')); return; }
   const next = routeBar(tab); bar.className = next.className; bar.title = next.title; bar.append(...next.childNodes);
-  const pending = el('span', ''); pending.id = 'pending-badge'; pending.textContent = 'Changes pending restart'; pending.hidden = !state.pending;
-  bar.querySelector('.route-right').prepend(pending);
 }
 let diffTab = 'domains', diffKey = '';
 function pill(text, red) { return el('span', `pill ${red ? 'red' : 'gray'}`, text); }

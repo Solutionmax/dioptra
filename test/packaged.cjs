@@ -13,11 +13,12 @@ const assert = require('node:assert/strict');
   fs.writeFileSync(path.join(profile, 'settings.json'), JSON.stringify({ rules: [{ domain: 'packaged.invalid', ip: '127.0.0.1', enabled: true }], tabs: [`https://packaged.invalid:${server.address().port}/`], updateFeed: '', autoUpdates: false, autoUpdatesChosen: true }));
   let app;
   try {
-    app = await electron.launch({ executablePath: process.argv[2], args: [`--profile-dir=${profile}`], timeout: 30000 });
+    app = await electron.launch({ executablePath: process.argv[2], chromiumSandbox: true, args: [`--profile-dir=${profile}`], timeout: 30000 });
     const ui = await app.firstWindow();
     await ui.getByRole('button', { name: 'Domains', exact: true }).waitFor();
     await ui.waitForFunction(() => document.querySelector('.tab-title')?.textContent.includes('Packaged browser test'));
     assert.equal(await app.evaluate(({ app }) => app.isPackaged), true);
+    assert.equal(await app.evaluate(() => process.argv.includes('--no-sandbox')), false);
     assert.match((await ui.evaluate(() => window.browser.command('state'))).state.updateFeed, /^https:\/\/github\.com\/Solutionmax\/dioptra\/releases\/latest\/download\/$/);
     assert.equal(await app.evaluate(({ webContents }) => webContents.getAllWebContents().find(w => w.getURL().includes('packaged.invalid')).getLastWebPreferences().sandbox), true);
     console.log('PASS: packaged native app launches, sandbox enabled, DNS override and untrusted/mismatched HTTPS certificate work.', await ui.evaluate(async () => (await window.browser.command('state')).state.versions));

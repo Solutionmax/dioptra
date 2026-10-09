@@ -2,31 +2,31 @@
 
 Detailed behaviour notes collected per release. For installation and everyday use, see the [README](../README.md).
 
-A migration browser for macOS and Linux, created by **SolutionMAX**. Map a domain to a test-server IP without changing your system hosts file or other browsers.
+A migration browser for macOS, Windows and Linux, created by **SolutionMAX**. Map a domain to a test-server IP without changing your system hosts file or other browsers.
 
 ## Install
 
-- Apple Silicon: unzip `Dioptra-0.6.0-mac-arm64.zip`, then move Dioptra to Applications.
-- Intel Mac: use `Dioptra-0.6.0-mac-x64.zip`.
-- Linux x64: make `Dioptra-0.6.0-linux-x86_64.AppImage` executable and launch it as a normal user. If FUSE is unavailable, use `--appimage-extract-and-run` or the tar.gz build.
+- Apple Silicon: unzip `Dioptra-1.0.0-mac-arm64.zip`, then move Dioptra to Applications.
+- Intel Mac: use `Dioptra-1.0.0-mac-x64.zip`.
+- Linux x64: make `Dioptra-1.0.0-linux-x86_64.AppImage` executable and launch it as a normal user. If FUSE is unavailable, use `--appimage-extract-and-run` or install the Ubuntu/Debian amd64 `.deb`.
 
-Mac previews are ad-hoc signed, not Developer ID signed or notarized. If macOS blocks opening, use System Settings → Privacy & Security → Open Anyway after attempting to open it. Do not disable Gatekeeper globally. Linux desktop sandbox requirements depend on the distribution; do not run the browser as root.
+Mac releases use the persistent SolutionMAX signing identity for updates, but are not Apple Developer ID signed or notarized. If macOS blocks opening, use System Settings → Privacy & Security → Open Anyway after attempting to open it. Do not disable Gatekeeper globally. Linux desktop sandbox requirements depend on the distribution; do not run the browser as root.
 
 Quit Migratiebrowser or Hostlane before launching Dioptra. The application ID and original `Migratiebrowser` profile directory are retained, preserving domain rules, tabs, cookies and logins. Keep only the app version you intend to use.
 
 ## Use
 
-1. Open **Domains** and add the exact domain and IPv4/IPv6 address. Add `www` and other subdomains separately.
-2. Choose **Apply and restart**. Tab addresses return; unsaved form entries do not.
-3. Navigate to the original domain. The bottom banner shows the configured **Hostfile IP**, observed **Connected IP** and active SSL policy.
+1. Open **Domains** and add the exact domain and IPv4/IPv6 address. Use Include WWW for the matching www alias; add other subdomains separately.
+2. Save the rule. Affected pages reload immediately; the app, other tabs and website storage stay open.
+3. Navigate to the original domain. The top route bar shows **NEW SERVER** or **LIVE**, observed IP and reverse DNS. Site info shows connection and certificate details.
 4. Open **Developer Tools** or press F12 to inspect the page inside the window. Drag the inspector handle to dock left, right or below, or use its docking buttons. Drag the dividing border to resize; Escape cancels a drag. Dock and size persist after restart. The focused separator also supports arrow keys. Each tab has its own inspector. Hiding the panel retains the debugging session until the tab closes.
-5. The gear opens **Settings**, separate from domain rules. **Settings → Updates** opens update status, release notes, download progress and installation controls.
+5. The gear opens **Settings**, separate from domain rules. **Settings → Dioptra updates** opens update status, release notes, download progress and installation controls.
 
-Under **Settings → Browsing**, enable **Verify website SSL certificates** and choose **Apply and restart** for strict checking. Migration bypass remains the default, including websites without an override. HTTPS remains encrypted, but server identity is not verified. Claude, account services and the update session always retain certificate verification. Website sandboxing and web security remain enabled. System proxy settings are bypassed within Dioptra so they cannot bypass domain mappings.
+Certificate verification is on. Domain rules can explicitly skip certificate errors on their new-server route; this applies immediately to the rule and its enabled WWW alias. Live, Claude, account services and updater requests remain strict. Website sandboxing and web security remain enabled. System proxy settings are bypassed within Dioptra so they cannot bypass domain mappings.
 
 ## Compare Hostfile and Live
 
-Open a website with an applied domain rule, then click **Compare**. The left pane uses Dioptra domain rules; the right pane uses normal OS DNS, bypassing all Dioptra rules. Blue **HOSTFILE** and green **LIVE** banners show each route and its observed IP. Click either page or its banner to use that pane with the address bar, back/forward, reload and find. Navigate each independently. Click **Compare** again to close the Live pane. Opening Developer Tools returns the selected pane to a full-width view.
+Open a website with an applied domain rule, then click **Compare**. The left pane uses Dioptra domain rules; the right pane uses normal OS DNS, bypassing all Dioptra rules. Blue **NEW SERVER** and green **LIVE** banners show each route and its observed IP. Click either page or its banner to use that pane with the address bar, back/forward, reload and find. Navigate each independently. Click **Single** to return to one pane. Opening Developer Tools returns the selected pane to a full-width view.
 
 The Live side has separate, temporary cookies/storage and a TCP tunnel bound only to this computer's loopback interface. HTTPS certificates and encryption remain handled by Chromium. It follows the system's normal DNS/hosts configuration. It does not use the operating system proxy. Dioptra never edits the system hosts file.
 
@@ -48,13 +48,13 @@ Unchanged settings are not rewritten on navigation events. Resolver rules are co
 
 The update screen supports HTTPS feeds, release information, download progress and restart/install confirmation. Optional checks run at startup and every four hours. App and Chromium update together.
 
-GitHub publication is deferred. No live feed is enabled by default. The build configuration contains a proposed GitHub Releases URL for generating release metadata; that repository/feed has not been published. See [release setup](docs/updates.md).
+The default feed is the public Solutionmax/dioptra GitHub release. See [release setup](updates.md). Private beta builds explicitly disable this feed; the v1.0.0 release enables it.
 
-The Linux AppImage update check and download/hash verification have been tested against a local HTTPS fixture. Installation is not yet end-to-end verified. macOS OTA installation additionally requires suitable code signing; no Developer ID identity is available on the build machine. Use manual replacement for the Mac preview.
+The Linux AppImage update check and download/hash verification have been tested against a local HTTPS fixture. Installation is not yet end-to-end verified. macOS OTA uses the same SolutionMAX signing identity across releases. Apple notarization remains unavailable; initial manual installation can require Open Anyway.
 
 ## Extensions
 
-Claude has an experimental built-in installer and compatibility layer; see below. Other Chrome Web Store extensions are not supported. Earlier stock-Electron failures remain documented in [the experiment report](docs/experiments/claude-extension.md).
+Claude has an experimental built-in installer and compatibility layer; see below. Other Chrome Web Store extensions are not supported. Earlier stock-Electron failures remain documented in [the experiment report](experiments/claude-extension.md).
 
 ## Develop
 
@@ -78,13 +78,13 @@ Settings: `~/Library/Application Support/Migratiebrowser/settings.json` on macOS
 
 ## What is still missing?
 
-See [the prioritized browser gap report](docs/browser-gaps.md) for migration tools, everyday browsing features and remaining distribution work.
+See [the prioritized browser gap report](browser-gaps.md) for migration tools, everyday browsing features and remaining distribution work.
 
 ## Claude inside Dioptra (experimental, 0.4.0)
 
 Click the **Claude icon → Install Claude**. Dioptra downloads the original extension from Google's HTTPS update service and verifies its CRX3 signature and publisher ID before extracting it into your profile. Sign in through the extension's **Log in** button; a paid Claude account is required. The Claude pane stays inside Dioptra. **Open Claude**, **Claude settings**, and **Remove Claude** are under **Settings → Claude**. The installed extension fills the sidebar without a second Dioptra header.
 
-The compatibility layer connects Claude's browser APIs to actual Dioptra tabs: tab queries, navigation, logical groups, script injection, debugger input, page reading and screenshots. Account traffic keeps certificate verification. Claude sign-in uses a separate persistent session with normal certificate checks, including third-party sign-in providers. Claude/Anthropic and common account-provider hosts are also always verified in browser tabs; other migration websites retain certificate bypass.
+The compatibility layer connects Claude's browser APIs to actual Dioptra tabs: tab queries, navigation, logical groups, script injection, debugger input, page reading and screenshots. Account traffic keeps certificate verification. Claude sign-in uses a separate persistent session with normal certificate checks, including third-party sign-in providers. Claude/Anthropic and common account-provider hosts are also always verified in browser tabs; other websites bypass certificate errors only when their matching enabled domain rule explicitly requests it.
 
 Verified with original Claude 1.0.94 on sandboxed macOS: online installation, original login UI and background worker, tab discovery, page reading/clicking/screenshots, native script injection, removal and isolated page privileges. A complete signed-in conversation and Claude-generated tool call still require an account test. This is experimental compatibility, not official Anthropic support. Separate browser windows and Claude Desktop/native-host pairing are not supported. Future extension versions may require compatibility changes.
 
@@ -92,7 +92,7 @@ Run `npm run test:claude` on a normal desktop user account to test an actual Web
 
 Claude login cookies are shared between the extension and the strict sign-in session, including existing profiles upgraded to 0.4.3. Logout and cookie expiry remain effective. Dioptra does not store your password or extend the extension’s token lifetime.
 
-If Chrome and Dioptra show different Claude interfaces, use **Settings → Claude → Refresh Claude** to reload the panel and fetch its interface settings again (save any draft first). It clears only the feature cache, not your sign-in or preferences. Then use **Check Claude → Copy Claude diagnostics**. The report contains only extension/app versions, interface/cache flags, permission consent, fixed interface signals and status/error codes for two specific requests. It excludes cookies, tokens, account details, chats and full feature payloads. No model or server-side availability flag is overridden.
+If Chrome and Dioptra show different Claude interfaces, use **Settings → Claude → Troubleshooting → Reload Claude** to reload the panel and fetch its interface settings again (save any draft first). It clears only the feature cache, not your sign-in or preferences. Then use **Check connection → Technical details → Copy diagnostics**. The report contains only extension/app versions, interface/cache flags, permission consent, fixed interface signals and status/error codes for two specific requests. It excludes cookies, tokens, account details, chats and full feature payloads. No model or server-side availability flag is overridden.
 
 In 0.4.4, the hosted Claude panel receives the correct Chrome side-panel identity when contacting the original extension worker. The narrow bridge runs only in the sandboxed Claude view and its claude.ai child frame. Refreshing the hosted page preserves this connection.
 
