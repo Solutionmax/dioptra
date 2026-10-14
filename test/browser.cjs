@@ -85,7 +85,7 @@ const { execFileSync } = require('node:child_process');
     let dockState = (await ui.evaluate(() => window.browser.command('state'))).state;
     assert.equal(dockState.devtoolsDock, 'right');
     assert.ok(dockState.toolsLayout.tools.x > dockState.toolsLayout.page.x);
-    assert.equal(dockState.toolsLayout.tools.y, 170);
+    assert.equal(dockState.toolsLayout.tools.y, dockState.toolsLayout.page.y + 32, 'inspector starts below its own 32 px bar, level with the page');
     const splitter = ui.getByRole('separator', { name: 'Resize Developer Tools' });
     const sizeBefore = dockState.toolsLayout.tools.width;
     const box = await splitter.boundingBox();

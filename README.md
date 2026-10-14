@@ -17,7 +17,7 @@ A browser for website migrations: open any site on its new server before DNS cha
   <a href="docs/technical-notes.md">Technical notes</a>
 </p>
 
-Screenshots show Dioptra **1.0.0** with a local demonstration website.
+Screenshots show Dioptra **1.0.1** with a local demonstration website.
 
 ![Dioptra comparing the new server (Hostfile) with the live site side by side](docs/screenshots/compare.png)
 
@@ -38,17 +38,17 @@ Moving a website to a new server usually means editing `/etc/hosts`, flushing DN
 
 ## Download
 
-Current release: [Dioptra v1.0.0](https://github.com/Solutionmax/dioptra/releases/tag/v1.0.0).
+Current release: [Dioptra v1.0.1](https://github.com/Solutionmax/dioptra/releases/tag/v1.0.1).
 
 | Platform | Download |
 | --- | --- |
-| macOS, Apple Silicon (M1 and later) | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.0.0/Dioptra-1.0.0-mac-arm64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.0.0/Dioptra-1.0.0-mac-arm64.zip) |
-| macOS, Intel | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.0.0/Dioptra-1.0.0-mac-x64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.0.0/Dioptra-1.0.0-mac-x64.zip) |
-| Windows 11 and 10, 64 bit | [Installer](https://github.com/Solutionmax/dioptra/releases/download/v1.0.0/Dioptra-1.0.0-win-x64.exe) |
-| Linux x86-64 | [AppImage](https://github.com/Solutionmax/dioptra/releases/download/v1.0.0/Dioptra-1.0.0-linux-x86_64.AppImage) |
-| Ubuntu / Debian, amd64 | [.deb package](https://github.com/Solutionmax/dioptra/releases/download/v1.0.0/Dioptra-1.0.0-ubuntu-amd64.deb) |
+| macOS, Apple Silicon (M1 and later) | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.0.1/Dioptra-1.0.1-mac-arm64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.0.1/Dioptra-1.0.1-mac-arm64.zip) |
+| macOS, Intel | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.0.1/Dioptra-1.0.1-mac-x64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.0.1/Dioptra-1.0.1-mac-x64.zip) |
+| Windows 11 and 10, 64 bit | [Installer](https://github.com/Solutionmax/dioptra/releases/download/v1.0.1/Dioptra-1.0.1-win-x64.exe) |
+| Linux x86-64 | [AppImage](https://github.com/Solutionmax/dioptra/releases/download/v1.0.1/Dioptra-1.0.1-linux-x86_64.AppImage) |
+| Ubuntu / Debian, amd64 | [.deb package](https://github.com/Solutionmax/dioptra/releases/download/v1.0.1/Dioptra-1.0.1-ubuntu-amd64.deb) |
 
-[SHA-256 checksums](https://github.com/Solutionmax/dioptra/releases/download/v1.0.0/SHA256SUMS.txt) · [Verification and platform coverage](docs/verification.md) · [All releases](https://github.com/Solutionmax/dioptra/releases)
+[SHA-256 checksums](https://github.com/Solutionmax/dioptra/releases/download/v1.0.1/SHA256SUMS.txt) · [Verification and platform coverage](docs/verification.md) · [All releases](https://github.com/Solutionmax/dioptra/releases)
 
 ## Install
 
@@ -86,7 +86,7 @@ Run it as a normal user. If FUSE is not available, add `--appimage-extract-and-r
 Download the `.deb` from the release, then install it with:
 
 ```sh
-sudo apt install ./Dioptra-1.0.0-ubuntu-amd64.deb
+sudo apt install ./Dioptra-1.0.1-ubuntu-amd64.deb
 ```
 
 Open **Dioptra** from your applications menu as your normal user. The package manager handles dependencies.
