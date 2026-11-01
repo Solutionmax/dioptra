@@ -121,10 +121,14 @@ const { execFileSync } = require('node:child_process');
 
     await ui.getByRole('button', { name: 'Developer Tools', exact: true }).click();
     const nativeTools = async () => { const until = Date.now() + 15000; for (;;) { const page = app.windows().find(p=>p.url().includes('card.html')); if (page) return page; if (Date.now() > until) throw new Error('Developer Tools card did not open'); await ui.waitForTimeout(100); } };
-    await (await nativeTools()).getByRole('link',{name:'Close Developer Tools',exact:true}).click();
+    const closeCard = await nativeTools();
+    const closeGone = closeCard.waitForEvent('close');
+    await closeCard.getByRole('link',{name:'Close Developer Tools',exact:true}).click({ noWaitAfter: true }).catch(error => { if (!closeCard.isClosed()) throw error; }); await closeGone;
     await ui.waitForFunction(() => document.querySelector('#devtools').getAttribute('aria-pressed') === 'false');
     await ui.getByRole('button', { name: 'Developer Tools', exact: true }).click();
-    await (await nativeTools()).getByRole('link',{name:'Open Developer Tools',exact:true}).click();
+    const openCard = await nativeTools();
+    const openGone = openCard.waitForEvent('close');
+    await openCard.getByRole('link',{name:'Open Developer Tools',exact:true}).click({ noWaitAfter: true }).catch(error => { if (!openCard.isClosed()) throw error; }); await openGone;
     await ui.waitForFunction(() => document.querySelector('#devtools').getAttribute('aria-pressed') === 'true');
     await ui.evaluate(async () => { await window.browser.command('devtools'); await window.browser.command('devtools'); });
     await app.evaluate(async ({ BrowserWindow }) => {

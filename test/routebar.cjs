@@ -40,7 +40,7 @@ const { execFileSync } = require('node:child_process');
     const chip = bar.locator('button.site-btn'); await chip.waitFor(); await click(chip);
     const siteText = await cardText('Connection & site comparison');
     assert.match(siteText, /WordPress/); assert.match(siteText, /Detected from the (generator tag|file paths in the page)/);
-    const cert = (await cardPage()).getByRole('link', {name:'SSL valid', exact:true});await cert.waitFor();await cert.click();
+    const siteCard = await cardPage(); const cert = siteCard.getByRole('link', {name:'SSL valid', exact:true});await cert.waitFor();const siteClosed = siteCard.waitForEvent('close'); await cert.click({ noWaitAfter: true }).catch(error => { if (!siteCard.isClosed()) throw error; }); await siteClosed;
     const certText = await cardText('days left');
     assert.match(certText, /Certificate valid/); assert.match(certText, /ISSUED TO \S+/i); assert.match(certText, /ISSUER \S+/i);
     assert.match(certText, /EXPIRES \d{1,2} \w{3} \d{4}/i); assert.match(certText, /\d+ days? left/);
@@ -78,7 +78,9 @@ const { execFileSync } = require('node:child_process');
     b = await topBounds(); const [, height] = await content();
     assert.ok(b.y + b.height <= height - 30 && b.y > 138, `memory card sits above the footer: ${JSON.stringify(b)}`);
     screen('memory.png');
-    await (await cardPage()).locator('a.mem-row').first().click(); await sleep(600);
+    const memCard = await cardPage();
+    const memClosed = memCard.waitForEvent('close');
+    await memCard.locator('a.mem-row').first().click({ noWaitAfter: true }).catch(error => { if (!memCard.isClosed()) throw error; }); await memClosed; await sleep(600);
     assert.equal(await views(), before, 'a tab row closes the card and jumps to the tab');
 
     // 6. Version in the footer opens the Updates panel with the explanation.
