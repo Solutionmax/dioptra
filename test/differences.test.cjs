@@ -185,3 +185,15 @@ test('anonymous Differences rejects credentials on redirect hops before sending 
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   }
 });
+test('Continue anyway on Live pins one certificate for the Differences fetch', async () => {
+  const https=require('node:https'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{execFileSync}=require('node:child_process'),{X509Certificate}=require('node:crypto');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dioptra-diff-pin-'));execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',dir+'/key','-out',dir+'/cert','-days','1','-subj','/CN=web03.oldhost.invalid'],{stdio:'ignore'});
+  let hits=0;const cert=fs.readFileSync(dir+'/cert'),server=https.createServer({key:fs.readFileSync(dir+'/key'),cert},(req,res)=>{hits++;res.end('<p>old</p>')});
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port;
+  const fetch=pin=>d.fetchDocument({fetch:global.fetch},`https://live.invalid:${port}/`,{resolveRoute:()=>({ip:'127.0.0.1',pin})});
+  try{
+    let result=await fetch(new X509Certificate(cert).fingerprint256);assert.equal(result.ok,true,result.error);assert.equal(result.body,'<p>old</p>');
+    result=await fetch('00:'.repeat(31)+'00');assert.equal(result.ok,false,'another certificate than the one chosen is refused');assert.match(result.error,/certificate changed/);assert.equal(hits,1,'no request reaches a server with another certificate');
+    assert.equal((await fetch(undefined)).ok,false,'without a pin Live stays strict');
+  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true,force:true})}
+});

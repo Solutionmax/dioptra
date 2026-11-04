@@ -29,6 +29,7 @@ function render(next) {
     const inDiff = currentView() === 'differences';
     $('welcome').hidden = inDiff || Boolean(state.comparison) || !tab.startPage || Boolean(tab.error);
     $('page-error').hidden = inDiff || Boolean(state.comparison) || !tab.error; $('page-error-detail').textContent = tab.error || ''; $('page-error-url').textContent = tab.url;
+    $('page-error-title').textContent = tab.certBlocked ? 'Live certificate is not trusted' : 'Unable to load page'; $('page-error-hint').hidden = Boolean(tab.certBlocked); $('page-error-help').replaceChildren(...(tab.error ? errorHelp(tab) : []));
     setIcon($('protocol'), tab.url.startsWith('https:') ? 'lock' : 'globe');
   }
   $('panel').hidden = !state.panel; document.body.classList.toggle('panel-open', Boolean(state.panel));
@@ -443,8 +444,8 @@ function renderWorkspace() {
     const bar=routeBar(t,{pane:true,selected,other:isRight?otherSite:undefined});place(bar,pane.banner);bar.classList.toggle('route-wrap',pane.banner.height>48);bar.classList.toggle('route-stack',pane.banner.width<=300);bar.classList.add(isRight?'pane-right':'pane-left');$('pane-bars').append(bar);
     if(t.error) {
       const error=el('div','comparison-error');place(error,pane.page);
-      error.append(el('h2','',`${t.route.label} could not load`),el('p','',t.url),el('code','',t.error));
-      const retry=el('button','','Try again');retry.onclick=async()=>{await command('activate',t.id);command('reload');};error.append(retry);$('comparison-errors').append(error);
+      error.append(el('h2','',t.certBlocked?'Live certificate is not trusted':`${t.route.label} could not load`),el('p','',t.url),el('code','',t.error));
+      const retry=el('button','','Try again');retry.onclick=async()=>{await command('activate',t.id);command('reload');};error.append(...errorHelp(t,retry));$('comparison-errors').append(error);
     } else if(isRight && t.startPage) {
       const empty=el('div','pane-empty'), hint=el('span','','Type the address of the other copy, for example ');place(empty,pane.page);
       hint.append(el('code','','staging.example.com'));empty.append(el('b','','What do you want to compare with?'),hint);$('comparison-errors').append(empty);
@@ -649,6 +650,23 @@ function toggleCard(button) { const r = button.getBoundingClientRect(); command(
 document.addEventListener('pointerdown', event => { const button = event.button === 0 && event.target.closest?.('[data-card]'); if (button) toggleCard(button); else command('card-close'); }, true);
 document.addEventListener('click', event => { const button = event.detail === 0 && event.target.closest?.('[data-card]'); if (button) toggleCard(button); });
 // Site info is available even when the page exposes no platform metadata.
+// A refused Live certificate: why, in plain words, then the ways on. Main decides what Continue anyway trusts.
+function certReason(c) {
+  const p = el('p', 'ssl-why'), name = el('b', '', c.subject || 'an unknown name');
+  if (/COMMON_NAME/.test(c.error)) p.append('The live server sent a certificate for ', name, ', not for ', el('b', '', c.host), '.');
+  else if (/DATE/.test(c.error)) p.append('The certificate for ', name, ' has expired or is not valid yet.');
+  else if (/AUTHORITY/.test(c.error)) p.append('The certificate for ', name, ' is not signed by a trusted authority.');
+  else p.append('The certificate for ', name, ' was refused.');
+  p.append(' Dioptra cannot confirm this is the real server, so anyone in between could read or change this page.');
+  return p;
+}
+function errorHelp(t, retry) {
+  const actions = el('div', 'ssl-actions'); if (retry) actions.append(retry);
+  if (/^https:/i.test(t.url)) { const http = el('button', '', 'Open via http'); http.onclick = async () => { await command('activate', t.id); command('navigate', t.url.replace(/^https:/i, 'http:')); }; actions.append(http); }
+  if (!t.certBlocked) return actions.childElementCount ? [actions] : [];
+  const go = el('button', 'ssl-continue', 'Continue anyway (unsafe)'); go.onclick = () => command('trust-certificate', t.id); actions.append(go);
+  return [certReason(t.certBlocked), actions, el('p', 'ssl-note', `Continue trusts this one certificate for ${t.certBlocked.host} until you quit Dioptra. Live only, never for Claude or sign in services.`)];
+}
 function siteChip(t) {
   const button = el('button', 'site-btn'); button.type = 'button'; button.dataset.card = 'site'; button.dataset.tab = t.id;
   button.append(icon('info'), el('span', 'action-label', 'Site info'), icon('chevron'));
@@ -683,6 +701,7 @@ function routeBar(t, { pane = false, selected = false, other } = {}) {
   const identity = el('div', 'route-identity'), badge = el(pane ? 'button' : 'span', 'badge', label);
   if (pane) { badge.type='button'; badge.setAttribute('aria-pressed', String(selected)); badge.setAttribute('aria-label', `${label} pane${t.route.host ? ` for ${t.route.host}` : ''}${selected ? ', selected' : ''}`); badge.onclick = () => command('activate', t.id); }
   identity.append(badge);
+  if (t.route.untrusted) { const chip = el('button', 'route-untrusted', 'Not trusted'); chip.type = 'button'; chip.dataset.card = 'site'; chip.dataset.tab = t.id; chip.title = 'You chose Continue anyway for this certificate. Click for details.'; chip.setAttribute('aria-haspopup', 'dialog'); identity.append(chip); }
   if (cached) { const cache = el('button', 'route-cache', 'Cached'); cache.type='button'; cache.dataset.card='cache'; cache.dataset.tab=t.id; cache.setAttribute('aria-haspopup','dialog'); identity.append(cache); }
   const ips = !cached && !t.error && !t.loading ? bareIP(t.connection?.ip) : '';
   const measured = t.startPage ? 'Ready to browse' : t.loading ? 'Connecting…' : ips || (cached ? 'IP · Not measured' : 'Not measured');

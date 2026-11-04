@@ -17,7 +17,7 @@ A browser for website migrations: open any site on its new server before DNS cha
   <a href="docs/technical-notes.md">Technical notes</a>
 </p>
 
-Screenshots show Dioptra **1.0.3** with a local demonstration website.
+Screenshots show Dioptra **1.1.0** with a local demonstration website.
 
 ![Dioptra comparing the new server (Hostfile) with the live site side by side](docs/screenshots/compare.png)
 
@@ -34,21 +34,21 @@ Moving a website to a new server usually means editing `/etc/hosts`, flushing DN
 - **Compare.** The new server and the live site side by side, each with its own cookies. Or put another URL on the right, such as the copy of a site on a temporary test domain. Drag the bar between the panes to give one side more room.
 - **Differences.** Dioptra fetches the page from both servers and shows what changed in the HTML, the headers and the external domains the page loads. Injected scripts and other signs of a hacked site stand out immediately.
 - **Claude built in.** Install the official Claude in Chrome extension and let Claude read, click and screenshot your tabs, including both sides of a comparison.
-- **Made for testing servers.** Certificate errors on a new server can be skipped, while Claude and sign-in services always keep strict certificate checks.
+- **Made for testing servers.** Certificate errors on a new server can be skipped, and a Live page with a bad certificate can be opened with **Continue anyway** for that one certificate. Claude and sign-in services always keep strict certificate checks.
 
 ## Download
 
-Current release: [Dioptra v1.0.3](https://github.com/Solutionmax/dioptra/releases/tag/v1.0.3).
+Current release: [Dioptra v1.1.0](https://github.com/Solutionmax/dioptra/releases/tag/v1.1.0).
 
 | Platform | Download |
 | --- | --- |
-| macOS, Apple Silicon (M1 and later) | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.0.3/Dioptra-1.0.3-mac-arm64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.0.3/Dioptra-1.0.3-mac-arm64.zip) |
-| macOS, Intel | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.0.3/Dioptra-1.0.3-mac-x64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.0.3/Dioptra-1.0.3-mac-x64.zip) |
-| Windows 11 and 10, 64 bit | [Installer](https://github.com/Solutionmax/dioptra/releases/download/v1.0.3/Dioptra-1.0.3-win-x64.exe) |
-| Linux x86-64 | [AppImage](https://github.com/Solutionmax/dioptra/releases/download/v1.0.3/Dioptra-1.0.3-linux-x86_64.AppImage) |
-| Ubuntu / Debian, amd64 | [.deb package](https://github.com/Solutionmax/dioptra/releases/download/v1.0.3/Dioptra-1.0.3-ubuntu-amd64.deb) |
+| macOS, Apple Silicon (M1 and later) | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.1.0/Dioptra-1.1.0-mac-arm64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.1.0/Dioptra-1.1.0-mac-arm64.zip) |
+| macOS, Intel | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.1.0/Dioptra-1.1.0-mac-x64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.1.0/Dioptra-1.1.0-mac-x64.zip) |
+| Windows 11 and 10, 64 bit | [Installer](https://github.com/Solutionmax/dioptra/releases/download/v1.1.0/Dioptra-1.1.0-win-x64.exe) |
+| Linux x86-64 | [AppImage](https://github.com/Solutionmax/dioptra/releases/download/v1.1.0/Dioptra-1.1.0-linux-x86_64.AppImage) |
+| Ubuntu / Debian, amd64 | [.deb package](https://github.com/Solutionmax/dioptra/releases/download/v1.1.0/Dioptra-1.1.0-ubuntu-amd64.deb) |
 
-[SHA-256 checksums](https://github.com/Solutionmax/dioptra/releases/download/v1.0.3/SHA256SUMS.txt) · [Verification and platform coverage](docs/verification.md) · [All releases](https://github.com/Solutionmax/dioptra/releases)
+[SHA-256 checksums](https://github.com/Solutionmax/dioptra/releases/download/v1.1.0/SHA256SUMS.txt) · [Verification and platform coverage](docs/verification.md) · [All releases](https://github.com/Solutionmax/dioptra/releases)
 
 ## Install
 
@@ -86,7 +86,7 @@ Run it as a normal user. If FUSE is not available, add `--appimage-extract-and-r
 Download the `.deb` from the release, then install it with:
 
 ```sh
-sudo apt install ./Dioptra-1.0.3-ubuntu-amd64.deb
+sudo apt install ./Dioptra-1.1.0-ubuntu-amd64.deb
 ```
 
 Open **Dioptra** from your applications menu as your normal user. The package manager handles dependencies.
@@ -145,7 +145,7 @@ Click **Differences**. Dioptra downloads the page from both servers and compares
 
 Compare shows you whether both sides *look* the same. Differences shows what the servers actually *send*. It can highlight unexpected scripts or injected markup worth investigating.
 
-Differences makes fresh anonymous document requests on both sides using Node's certificate trust store. A private CA trusted only by Chromium or the operating system may therefore work in a browser pane but fail in Differences. Hostfile applies the matching domain rule's Skip SSL choice; Live always verifies certificates and uses normal DNS. Neither side sends your saved cookies. Each reported IP belongs to the final document after redirects.
+Differences makes fresh anonymous document requests on both sides using Node's certificate trust store. A private CA trusted only by Chromium or the operating system may therefore work in a browser pane but fail in Differences. Hostfile applies the matching domain rule's Skip SSL choice; Live uses normal DNS and verifies certificates, except the one certificate you accepted with Continue anyway on that domain. Neither side sends your saved cookies. Each reported IP belongs to the final document after redirects.
 
 ![Differences view listing a script that loads only on the live site](docs/screenshots/differences.png)
 
@@ -157,7 +157,7 @@ Differences makes fresh anonymous document requests on both sides using Node's c
 
 Settings stays in the right sidebar, organized into **General**, **Browsing & privacy**, **Servers**, **Claude**, **Dioptra updates** and **About Dioptra**.
 
-- **SSL verification:** on by default. A domain rule can explicitly skip certificate errors for its new server. Changes apply immediately. Live, Claude and sign-in services stay strict.
+- **SSL verification:** on by default. A domain rule can explicitly skip certificate errors for its new server. Changes apply immediately. Live stays strict until you choose **Continue anyway (unsafe)** on its certificate error: that trusts the one certificate shown for that domain until you quit Dioptra, a different certificate asks again, and a red **Not trusted** chip marks the page. **Open via http** is offered for any page that fails over https. Claude and sign-in services always stay strict.
 - **Clear cache** (footer): clears the cache and DNS cache and reloads the page, in Compare both panes. Cookies and logins are kept.
 - **Clear site data:** removes cookies, storage, service workers and cache for the current site only. Handy when an old session hides what the new server does. Claude and sign-in services are never cleared this way.
 - **Bookmarks, history and downloads** live under the Library button in the toolbar, with search, progress and download controls.

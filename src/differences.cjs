@@ -195,8 +195,9 @@ function mappedFetch(target, signal, resolveRoute) {
   if (url.username || url.password) throw new Error('URL credentials are not allowed in anonymous comparisons.');
   const transport = require(url.protocol === 'https:' ? 'node:https' : 'node:http');
   return new Promise((resolve, reject) => {
-    const request = transport.get(url, {
-      agent: false, signal, rejectUnauthorized: route?.skipSSL !== true,
+    const request = (route?.pin ? transport.request : transport.get)(url, {
+      // pin: Continue anyway on Live accepts one exact certificate (SHA-256), checked below before anything is sent.
+      agent: false, signal, rejectUnauthorized: route?.skipSSL !== true && !route?.pin,
       ...(route?.ip ? { lookup: (_host, options, done) => {
         const address = { address: route.ip, family: require('node:net').isIP(route.ip) };
         if (options.all) done(null, [address]); else done(null, address.address, address.family);
@@ -208,6 +209,12 @@ function mappedFetch(target, signal, resolveRoute) {
       resolve({ status: incoming.statusCode, headers, body: Readable.toWeb(incoming), ip: incoming.socket.remoteAddress || '' });
     });
     request.on('error', reject);
+    // A pinned request is only ended (headers written) once the handshake shows the pinned certificate.
+    if (route?.pin && url.protocol === 'https:') request.once('socket', socket => socket.once('secureConnect', () => {
+      if (socket.authorized || socket.getPeerCertificate().fingerprint256 === route.pin) request.end();
+      else request.destroy(new Error('The live certificate changed since you chose Continue anyway. Open the page again to check it.'));
+    }));
+    else if (route?.pin) request.end();
   });
 }
 // Fetches one document, following up to MAX_REDIRECTS hops by hand so each hop is recorded.

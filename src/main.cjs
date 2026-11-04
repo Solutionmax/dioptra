@@ -1,7 +1,7 @@
 const { createLiveProxy } = require('./live-proxy.cjs');
 const { detectSite } = require('./site-detect.cjs');
 const { createLibrary } = require('./library.cjs');
-const { randomUUID } = require('node:crypto');
+const { randomUUID, X509Certificate } = require('node:crypto');
 const { shareClaudeSession } = require('./claude-session.cjs');
 const { app, BrowserWindow, WebContentsView, ipcMain, session, dialog, Menu, clipboard, shell } = require('electron');
 const path = require('node:path');
@@ -75,6 +75,10 @@ function protectedHost(host) { return ['claude.ai','claude.com','anthropic.com',
 // Certificate observations per route and hostname; verified and skipped remain distinct.
 // Limit: grows with every visited hostname until restart; cap it if that ever shows up in RAM.
 const certificates = new Map(), certKey = (mode, host) => `${mode === 'live' ? 'live' : 'hostfile'}:${host}`;
+// Continue anyway on a Live page: host -> SHA-256 of that one certificate. Memory only, so it ends with the app; Chromium
+// keeps an accepted certificate until restart as well, so promising less (until the tab closes) would not hold.
+const liveExceptions = new Map();
+const fingerprint = cert => { try { return new X509Certificate(cert.data).fingerprint256; } catch { return ''; } };
 function certificatePolicy(ses) {
   ses.setCertificateVerifyProc((request, callback) => {
     const host = request.hostname.toLowerCase(), key = certKey(ses === liveSession ? 'live' : 'hostfile', host);
@@ -237,8 +241,9 @@ function route(tab) {
   const rule = tab.mode === 'hostfile' && activeHosts.find(r => r.enabled && r.domain === host);
   const ssl = !tab.url.startsWith('https:') ? 'HTTP · no TLS' : tab.mode === 'hostfile' && rule?.skipSSL && !protectedHost(host) ? 'SSL checks off' : 'SSL checks on';
   const observed = !tab.connection?.fromCache && certificates.get(certKey(tab.mode, host));
-  const certificate = tab.mode !== 'auth' && observed ? { ...observed, skipped: ssl === 'SSL checks off' && !observed.verified } : null;
-  return { certificate, label: rule ? 'HOSTFILE' : 'LIVE', configured: rule?.ip || '', host, ssl, dns: tab.mode !== 'auth' && canLookup(host), cert: ssl === 'SSL checks on' && tab.mode !== 'auth' && certificates.get(certKey(tab.mode, host))?.verified === true && !tab.connection?.fromCache };
+  const untrusted = tab.mode === 'live' && !tab.error && liveExceptions.has(host) && observed?.verified !== true;
+  const certificate = tab.mode !== 'auth' && observed ? { ...observed, skipped: (ssl === 'SSL checks off' || untrusted) && !observed.verified } : null;
+  return { certificate, untrusted, label: rule ? 'HOSTFILE' : 'LIVE', configured: rule?.ip || '', host, ssl, dns: tab.mode !== 'auth' && canLookup(host), cert: ssl === 'SSL checks on' && tab.mode !== 'auth' && certificates.get(certKey(tab.mode, host))?.verified === true && !tab.connection?.fromCache };
 }
 const tabs = new Map();
 const current = () => tabs.get(activeId);
@@ -253,7 +258,7 @@ function persist() {
   if (serialized !== lastSavedSettings) { saveSettings(settingsFile, config); lastSavedSettings = serialized; }
 }
 function state() {
-  return { privateBeta, onboarding: { open: onboardingOpen, step: config.onboardingStep, url: config.onboardingURL }, view: visibleComparison() ? 'compare' : viewMode, routeBarHeight: visibleComparison() ? 0 : ROUTE_BAR_HEIGHT, differences: viewMode === 'differences' ? differences : { ...differences, report: null }, performance, comparison: visibleComparison(), paneLayout, find: findState, sslVerification: config.sslVerification, activeSSL, sslPolicyVersion: config.sslPolicyVersion, sslMigration: config.sslMigration, library: library?.snapshot() || {bookmarks:[],history:[],downloads:[]}, downloads: [...downloadItems.values()].map(d=>d.record), tabs: [...tabs.values()].map(t => ({ mode: t.mode, route: route(t), site: t.site || null, connection: t.connection, id: t.id, title: t.title, url: t.url, startPage: t.startPage, loading: t.loading, devtools: Boolean(t.toolsOpen), error: t.error, back: t.ruleHistoryIndex !== undefined ? t.ruleHistoryIndex > 0 : t.view.webContents.navigationHistory.canGoBack(), forward: t.ruleHistoryIndex !== undefined ? t.ruleHistoryIndex < t.view.webContents.navigationHistory.length() - 1 : t.view.webContents.navigationHistory.canGoForward() })), activeId, rules: config.rules, activeRules, servers: config.servers, pending: pending(), panel, platform: process.platform, versions: { app: app.getVersion(), electron: process.versions.electron, chromium: process.versions.chrome }, updateFeed: updateFeed(), autoUpdates: config.autoUpdates, update: updateState, devtoolsDock: config.devtoolsDock, devtoolsRatio: config.devtoolsRatio, compareRatio: config.compareRatio, toolsLayout, draggingTools, claude: { ...claudeState, autoCheck: config.claudeAutoCheck, update: claudeUpdates?.state || {status:'idle', version:'', message:'Not checked yet.'} } };
+  return { privateBeta, onboarding: { open: onboardingOpen, step: config.onboardingStep, url: config.onboardingURL }, view: visibleComparison() ? 'compare' : viewMode, routeBarHeight: visibleComparison() ? 0 : ROUTE_BAR_HEIGHT, differences: viewMode === 'differences' ? differences : { ...differences, report: null }, performance, comparison: visibleComparison(), paneLayout, find: findState, sslVerification: config.sslVerification, activeSSL, sslPolicyVersion: config.sslPolicyVersion, sslMigration: config.sslMigration, library: library?.snapshot() || {bookmarks:[],history:[],downloads:[]}, downloads: [...downloadItems.values()].map(d=>d.record), tabs: [...tabs.values()].map(t => ({ mode: t.mode, route: route(t), site: t.site || null, connection: t.connection, id: t.id, title: t.title, url: t.url, startPage: t.startPage, loading: t.loading, devtools: Boolean(t.toolsOpen), error: t.error, certBlocked: t.error && t.certBlocked ? { host: t.certBlocked.host, error: t.certBlocked.error, subject: t.certBlocked.subject } : null, back: t.ruleHistoryIndex !== undefined ? t.ruleHistoryIndex > 0 : t.view.webContents.navigationHistory.canGoBack(), forward: t.ruleHistoryIndex !== undefined ? t.ruleHistoryIndex < t.view.webContents.navigationHistory.length() - 1 : t.view.webContents.navigationHistory.canGoForward() })), activeId, rules: config.rules, activeRules, servers: config.servers, pending: pending(), panel, platform: process.platform, versions: { app: app.getVersion(), electron: process.versions.electron, chromium: process.versions.chrome }, updateFeed: updateFeed(), autoUpdates: config.autoUpdates, update: updateState, devtoolsDock: config.devtoolsDock, devtoolsRatio: config.devtoolsRatio, compareRatio: config.compareRatio, toolsLayout, draggingTools, claude: { ...claudeState, autoCheck: config.claudeAutoCheck, update: claudeUpdates?.state || {status:'idle', version:'', message:'Not checked yet.'} } };
 }
 function emit() {
   // Tab views are destroyed while quitting; state() must not touch them then.
@@ -367,13 +372,18 @@ function bindTab(view, initial = 'about:blank', load = true, foreground = true) 
   tabs.set(tab.id, tab); win.contentView.addChildView(view);
   const wc = view.webContents;
   claude?.bind(tab);
-  wc.on('certificate-error', (event, url, error, certificate, callback) => {
+  wc.on('certificate-error', (event, url, error, certificate, callback, isMainFrame) => {
     event.preventDefault();
-    const host = new URL(url).hostname.toLowerCase();
+    const host = new URL(url).hostname.toLowerCase(), print = fingerprint(certificate);
     const skipped = tab.mode === 'hostfile' && skipCertificate(host);
+    const canTrust = tab.mode === 'live' && Boolean(print) && !protectedHost(host), trusted = canTrust && liveExceptions.get(host) === print;
     const summary = certSummary(certificate);
     if (tab.mode !== 'auth' && summary) certificates.set(certKey(tab.mode, host), { ...summary, verificationResult: error, verified: false });
-    callback(skipped);
+    // Kept in main only: Continue anyway can trust nothing but the certificate this tab was refused.
+    if (isMainFrame && canTrust && !trusted) tab.certBlocked = { host, print, error, subject: summary?.subject || '' };
+    // Electron 45.2.2 crashes the main process (SIGSEGV) when this callback runs inside the event for a wss:// request,
+    // with true or false alike; one tick later it is fine. The decision is taken above, only the answer waits.
+    const answer = skipped || trusted; setImmediate(() => callback(answer));
   });
   wc.on('input-event', (_event, input) => { if (input.type === 'mouseDown') closeCard(); });
   wc.on('focus', () => { if (visibleComparison() && activeId !== tab.id) activate(tab.id); });
@@ -382,7 +392,7 @@ function bindTab(view, initial = 'about:blank', load = true, foreground = true) 
   wc.on('did-start-loading', () => { tab.loading = true; emit(); });
   wc.on('did-stop-loading', () => { tab.loading = false; if (!tab.reloadingRules && !tab.error && allowed(wc.getURL())) { tab.url = wc.getURL(); if(tab.mode !== 'auth') library.visit(tab.url, wc.getTitle()); persist(); inspectSite(tab); } emit(); });
   wc.on('did-start-navigation', (_event, url, inPlace, isMainFrame) => {
-    if (isMainFrame && !inPlace && !tab.reloadingRules) { if (tab.id === activeId) viewMode = 'single'; tab.requestHosts.clear(); try { certificates.delete(certKey(tab.mode, new URL(url).hostname)); } catch {} tab.navStart = Date.now(); tab.connection = null; tab.site = null; tab.siteHeaders = {}; tab.url = url; if (url !== 'about:blank') tab.startPage = false; tab.error = ''; layout(); emit(); }
+    if (isMainFrame && !inPlace && !tab.reloadingRules) { if (tab.id === activeId) viewMode = 'single'; tab.requestHosts.clear(); tab.certBlocked = null; try { certificates.delete(certKey(tab.mode, new URL(url).hostname)); } catch {} tab.navStart = Date.now(); tab.connection = null; tab.site = null; tab.siteHeaders = {}; tab.url = url; if (url !== 'about:blank') tab.startPage = false; tab.error = ''; layout(); emit(); }
   });
   const navigated = (_event, url) => { if (tab.reloadingRules) return; tab.url = url; tab.error = ''; persist(); layout(); emit(); };
   wc.on('did-navigate', navigated);
@@ -544,7 +554,7 @@ function runDifferences() {
   mine.promise = (async () => {
     try {
       await ensureLive();
-      const [hostfile, live] = await Promise.all([fetchDocument(webSession, url, { resolveRoute: host => ({ ip: activeHosts.find(r => r.enabled && r.domain === host)?.ip, skipSSL: skipCertificate(host) }) }), fetchDocument(liveSession, url, { resolveRoute: () => null })]);
+      const [hostfile, live] = await Promise.all([fetchDocument(webSession, url, { resolveRoute: host => ({ ip: activeHosts.find(r => r.enabled && r.domain === host)?.ip, skipSSL: skipCertificate(host) }) }), fetchDocument(liveSession, url, { resolveRoute: host => liveExceptions.has(host) ? { pin: liveExceptions.get(host) } : null })]);
       const report = buildReport({ url, hostfile, live });
       if (diffRun === mine) differences = { status: 'done', report, error: '' };
       return report;
@@ -771,6 +781,13 @@ ipcMain.handle('browser', async (event, action, data) => {
       case 'back': historyStep(tab, -1); break;
       case 'forward': historyStep(tab, 1); break;
       case 'reload': reloadTab(tab); break;
+      case 'trust-certificate': {
+        const target = tabs.get(Number(data)), blocked = target?.certBlocked;
+        if (!blocked || target.mode !== 'live' || protectedHost(blocked.host)) throw new Error('There is no refused certificate to continue with.');
+        liveExceptions.set(blocked.host, blocked.print); target.certBlocked = null; target.error = ''; differences = { status: 'idle', report: null, error: '' }; layout();
+        target.view.webContents.loadURL(target.url).catch(error => { if (error.code !== 'ERR_ABORTED' && error.errno !== -3) failure(target, error.message); });
+        break;
+      }
       case 'hard-reload': reloadTab(tab, true); break;
       case 'stop': tab.view.webContents.stop(); break;
       case 'panel': if (data === 'claude' && claudeState.status === 'ready') { await openClaudePanel(); claude.clicked(current()); } panel = ['domains', 'settings', 'updates', 'claude', 'library'].includes(data) ? data : null; layout(); break;
