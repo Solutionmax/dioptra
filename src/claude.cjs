@@ -4,6 +4,7 @@ const ID = 'fcoeoabgfenejglbffodgkkbkcdhcgfn';
 const ORIGIN = `chrome-extension://${ID}`;
 const { readClaudeDiagnostics } = require('./claude-diagnostics.cjs');
 const { claudeFeatureHeaders } = require('./claude-network.cjs');
+const { observeRequests } = require('./web-requests.cjs');
 
 // One official extension, one Dioptra window. Chromium still owns extension
 // messaging, storage, content scripts and permissions. Only missing APIs live here.
@@ -23,9 +24,9 @@ function createClaude({ session, authSession, window, tabs, current, newTab, act
     if (parsed.origin === 'https://api.anthropic.com' && parsed.pathname === '/api/bootstrap/features/claude_in_chrome') return 'features';
     if (parsed.origin === 'https://claude.ai' && parsed.pathname === '/cic/new') return 'newInterface';
   };
-  const filter = { urls: ['https://api.anthropic.com/api/bootstrap/features/claude_in_chrome*', 'https://claude.ai/cic/new*'] };
-  session.webRequest.onCompleted(filter, details => { const name = requestName(details.url); if (name) requests[name] = { client: requests[name]?.client, status: details.statusCode }; });
-  session.webRequest.onErrorOccurred(filter, details => { const name = requestName(details.url); if (name) requests[name] = { client: requests[name]?.client, error: details.error }; });
+  // Shared with the file check (web-requests.cjs): a direct onCompleted here would replace its listener. requestName skips other URLs.
+  observeRequests(session, 'onCompleted', details => { const name = requestName(details.url); if (name) requests[name] = { client: requests[name]?.client, status: details.statusCode }; });
+  observeRequests(session, 'onErrorOccurred', details => { const name = requestName(details.url); if (name) requests[name] = { client: requests[name]?.client, error: details.error }; });
   const cdpMethods = new Set(['Input.dispatchKeyEvent','Input.dispatchMouseEvent','Input.insertText','Network.disable','Network.enable','Page.captureScreenshot','Page.enable','Page.handleJavaScriptDialog','Runtime.enable','Runtime.evaluate']);
   const windowId = window.id;
   const all = () => [...tabs.values()];

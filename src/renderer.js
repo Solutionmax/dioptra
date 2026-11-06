@@ -502,13 +502,21 @@ function renderLibrary() {
 }
 $('compare').onclick=()=>command(currentView()==='compare'?'stop-compare':'compare');
 $('view-single').onclick=()=>currentView()==='compare'?command('stop-compare'):currentView()==='differences'?command('view','single'):0;
-$('view-differences').onclick=async()=>{
+async function openDifferences() {
   if(currentView()==='differences') return;
   if(currentView()==='compare') await command('stop-compare');
   const result=await command('view','differences'); if(!result.ok) return;
   const d=state.differences, tab=state.tabs.find(t=>t.id===state.activeId);
   if(d?.status!=='running' && !(d?.status==='done' && d.report?.url===tab?.url)) command('differences-run');
-};
+}
+$('view-differences').onclick=openDifferences;
+// A files chip opens Differences on its Files tab. Like the cards: on pointerdown, because the bar is rebuilt on every state update.
+function openChecks() { diffTab='checks'; diffKey=''; if(currentView()==='differences') renderDifferences(state.tabs.find(t=>t.id===state.activeId),'differences'); else openDifferences(); }
+document.addEventListener('pointerdown',event=>{ if(event.button===0 && event.target.closest?.('[data-checks]')) { event.preventDefault(); openChecks(); } },true);
+document.addEventListener('click',event=>{ if(event.detail===0 && event.target.closest?.('[data-checks]')) openChecks(); });
+function openFiles() { diffTab='files'; diffKey=''; if(currentView()==='differences') renderDifferences(state.tabs.find(t=>t.id===state.activeId),'differences'); else openDifferences(); }
+document.addEventListener('pointerdown',event=>{ if(event.button===0 && event.target.closest?.('[data-files]')) { event.preventDefault(); openFiles(); } },true);
+document.addEventListener('click',event=>{ if(event.detail===0 && event.target.closest?.('[data-files]')) openFiles(); });
 $('clear-site-data').onclick=async()=>{ if((await command('clear-site-data')).ok) toast('Site data cleared for this site.'); };
 $('open-release').onclick=$('release-page').onclick=()=>command('open-release');
 $('footer-version').onclick=()=>openSettings('updates');
@@ -556,7 +564,9 @@ const ICONS = {
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   chevron: '<path d="m6 9 6 6 6-6"/>',
   sliders: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="17" r="2"/>',
-  pen: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>'
+  pen: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/>',
+  open: '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>'
 };
 function icon(name) { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.innerHTML = ICONS[name]; return svg; }
 function setIcon(node, name) { if (node.dataset.icon === name) return; node.dataset.icon = name; node.replaceChildren(icon(name)); }
@@ -703,6 +713,7 @@ function routeBar(t, { pane = false, selected = false, other } = {}) {
   identity.append(badge);
   if (t.route.untrusted) { const chip = el('button', 'route-untrusted', 'Not trusted'); chip.type = 'button'; chip.dataset.card = 'site'; chip.dataset.tab = t.id; chip.title = 'You chose Continue anyway for this certificate. Click for details.'; chip.setAttribute('aria-haspopup', 'dialog'); identity.append(chip); }
   if (cached) { const cache = el('button', 'route-cache', 'Cached'); cache.type='button'; cache.dataset.card='cache'; cache.dataset.tab=t.id; cache.setAttribute('aria-haspopup','dialog'); identity.append(cache); }
+  identity.append(...filesChips(t, !$('view-differences').disabled), ...noindexChip(t, !$('view-differences').disabled));
   const ips = !cached && !t.error && !t.loading ? bareIP(t.connection?.ip) : '';
   const measured = t.startPage ? 'Ready to browse' : t.loading ? 'Connecting…' : ips || (cached ? 'IP · Not measured' : 'Not measured');
   identity.append(el('span', 'route-ip', measured));
@@ -721,13 +732,42 @@ function renderRouteBar(tab, view) {
   const next = routeBar(tab); bar.className = next.className; bar.title = next.title; bar.append(...next.childNodes);
 }
 let diffTab = 'domains', diffKey = '';
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+// Red: files that fail only on this side. Orange: they fail on the other server too, so not a migration difference.
+function filesChips(t, clickable) {
+  const f = t.files, chips = [];
+  if (!f || t.startPage) return chips;
+  const hostfile = t.mode === 'hostfile', other = hostfile ? 'Live' : 'the new server';
+  const chip = (text, both, title) => {
+    const c = el(clickable ? 'button' : 'span', `route-failed${both ? ' both' : ''}`, text);
+    if (clickable) { c.type = 'button'; c.dataset.files = String(t.id); }
+    c.title = clickable ? `${title} Click to see the files.` : title; c.setAttribute('aria-label', c.title); return c;
+  };
+  if (f.failed) chips.push(chip(`${plural(f.failed, 'file')} failed`, false, !f.compared
+    ? `${plural(f.failed, 'file')} did not load here.${hostfile && t.route.configured ? ' Open Compare to check them on Live.' : ''}`
+    : `${plural(f.failed, 'file')} failed only on this server.${f.both ? ` ${f.both} more ${f.both === 1 ? 'fails' : 'fail'} on both servers.` : ''}`));
+  else if (f.both) chips.push(chip(`${plural(f.both, 'file')} failed`, true, f.both === 1
+    ? `1 file did not load here. It fails on ${other} too, so it is not a migration difference.`
+    : `${f.both} files did not load here. They fail on ${other} too, so they are not a migration difference.`));
+  if (f.old && hostfile) chips.push(chip(`${f.old} from old server`, false, `${plural(f.old, 'file')} on this page came from the old server: ${f.oldHosts.join(', ')} ${f.oldHosts.length === 1 ? 'has' : 'have'} no domain rule.`));
+  return chips;
+}
+// Red: the new server tells search engines not to index the page. Orange: Live says so too, so not a migration difference.
+function noindexChip(t, clickable) {
+  if (!t.noindex || t.startPage) return [];
+  const c = el(clickable ? 'button' : 'span', `route-failed route-noindex${t.noindex === 'both' ? ' both' : ''}`, 'Noindex');
+  const title = t.noindex === 'both' ? 'Both servers tell search engines not to index this page, so it is not a migration difference.' : 'The new server tells search engines not to index this page.';
+  if (clickable) { c.type = 'button'; c.dataset.checks = String(t.id); }
+  c.title = clickable ? `${title} Click to see the checks.` : title; c.setAttribute('aria-label', c.title); return [c];
+}
 function pill(text, red) { return el('span', `pill ${red ? 'red' : 'gray'}`, text); }
 function diffState(box, node) { box.replaceChildren(node); }
 function renderDifferences(tab, view) {
   const box = $('differences'); box.hidden = view !== 'differences';
   if (box.hidden) { diffKey = ''; return; }
   const d = state.differences || { status: 'idle' }, r = d.report;
-  const key = JSON.stringify([d.status, d.error, r?.comparedAt, r?.url, diffTab, state.tabs.find(t => t.id === state.activeId)?.route.label]);
+  const nl = d.liveReason || null; // Live could not be reached: nothing below compares with an empty Live
+  const key = JSON.stringify([d.status, d.error, r?.comparedAt, r?.url, diffTab, state.tabs.find(t => t.id === state.activeId)?.route.label, state.files, pageTabsKey(), nl && [nl.text, nl.detail, nl.checkedAt], d.liveRetry]);
   if (key === diffKey) return; diffKey = key;
   if (d.status === 'running' || (d.status === 'idle' && !r)) { const n = el('div', 'dstate'); n.append(el('div', 'spinner'), el('h2', '', 'Comparing both servers'), el('p', '', 'Fetching the page from the Hostfile server and from Live.')); return diffState(box, n); }
   if (d.status === 'error' || !r) { const n = el('div', 'dstate'); n.append(el('h2', '', 'Comparison failed'), el('code', '', d.error || 'No report available.')); const again = el('button', 'primary', 'Try again'); again.onclick = () => command('differences-run'); n.append(again); return diffState(box, n); }
@@ -735,32 +775,117 @@ function renderDifferences(tab, view) {
   let host = ''; try { host = new URL(r.url).hostname; } catch {}
   const main = el('div', 'diff-main'), head = el('div', 'dhead'), vs = el('div', 'dvs');
   const badgeHF = el('span', 'badge', 'HOSTFILE'), badgeLive = el('span', 'badge', 'LIVE'); const hfWrap = el('span', 'hostfile'), liveWrap = el('span', 'live'); hfWrap.append(badgeHF); liveWrap.append(badgeLive);
-  vs.append(hfWrap, el('span', '', r.hostfile?.ip || 'n/a'), el('span', '', 'vs'), liveWrap, el('span', '', `${r.live?.ip || 'n/a'} · compared ${new Date(r.comparedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`));
+  const compared = `compared ${new Date(r.comparedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`, liveText = el('span', '');
+  if (nl) { const chip = el('span', 'nl-chip', nl.short); chip.title = nl.text; liveText.append(chip, `· ${compared}`); } else liveText.textContent = `${r.live?.ip || 'n/a'} · ${compared}`;
+  vs.append(hfWrap, el('span', '', r.hostfile?.ip || 'n/a'), el('span', '', 'vs'), liveWrap, liveText);
   const again = el('button', 'btn'); again.append(icon('reload'), 'Compare again'); again.onclick = () => command('differences-run');
   head.append(el('h2', '', host || r.url), vs, again);
-  const kpis = el('div', 'kpis');
-  const card = (label, big, sub, alert) => { const c = el('div', `kpi${alert ? ' alert' : ''}`); c.append(el('div', 'lbl', label), el('div', 'n', big), el('div', 's', sub)); return c; };
+  const kpis = el('div', 'kpis five');
+  const card = (label, big, sub, alert, muted) => { const c = el('div', `kpi${alert ? ' alert' : ''}${muted ? ' muted' : ''}`); c.append(el('div', 'lbl', label), el('div', 'n', big), el('div', 's', sub)); return c; };
   const headerDiffs = r.headers || [];
-  kpis.append(
+  if (nl) kpis.append(
+    card('External domains', domains.length ? `${domains.length} on Hostfile` : 'None found', 'no Live to compare', false, true),
+    card('Files', 'Not measured', 'Live has no page', false, true), card('HTML', 'Not compared', 'Live has no page', false, true), card('Headers', 'Not compared', 'Live has no page', false, true),
+    card('Status · speed', `${r.hostfile?.status ?? 'n/a'} · no Live`, `Hostfile ${Number.isFinite(r.hostfile?.ms) ? formatMs(r.hostfile.ms) : 'not measured'}`, false));
+  else kpis.append(
     card('External domains', oneSided.length ? `${oneSided.length} only on ${liveOnly.length && !hostOnly.length ? 'Live' : hostOnly.length && !liveOnly.length ? 'Hostfile' : 'one side'}` : 'No differences', oneSided.length ? oneSided.slice(0, 2).map(x => x.host).join(', ') : `${domains.length} found on both`, liveOnly.length > 0),
+    filesCard(state.files, card),
     card('HTML', r.html?.changedLines ? `${r.html.changedLines} line${r.html.changedLines === 1 ? '' : 's'}` : 'Identical', r.html?.changedLines ? 'changed between servers' : 'same markup', false),
     card('Headers', String(headerDiffs.length), headerDiffs.length ? headerDiffs.slice(0, 3).map(h => h.name).join(', ') : 'no differences', false),
     card('Status · speed', `${r.hostfile?.status ?? '—'} · ${r.live?.status ?? '—'}`, `${Number.isFinite(r.hostfile?.ms) ? formatMs(r.hostfile.ms) : '—'} vs ${Number.isFinite(r.live?.ms) ? formatMs(r.live.ms) : '—'}`, r.hostfile?.status !== r.live?.status));
   const box2 = el('div', 'dcard'), ch = el('div', 'dch'), tabs = el('div', 'subtabs');
-  const titles = { domains: ['External domains', 'where the page loads scripts, fonts and images from'], html: ['HTML', 'changed lines with context'], headers: ['Headers', 'only where the servers differ'] };
+  const titles = { domains: ['External domains', 'where the page loads scripts, fonts and images from'], files: ['Files that did not load', 'per server'], speed: ['Speed', nl ? 'the new server on its own' : 'new server against Live'], checks: ['Checks', nl ? 'the new server on its own, judged on what a good server gives' : 'search engines, old addresses, standard URLs'], html: ['HTML', 'changed lines with context'], headers: ['Headers', 'only where the servers differ'] };
   ch.append(el('b', '', titles[diffTab][0]), el('span', 'lbl', titles[diffTab][1]));
-  for (const [id, label] of [['domains', 'Domains'], ['html', 'HTML'], ['headers', 'Headers']]) { const b = el('button', '', label); b.setAttribute('aria-pressed', String(diffTab === id)); b.onclick = () => { diffTab = id; renderDifferences(tab, currentView()); }; tabs.append(b); }
+  if (diffTab === 'files') {
+    const reload = el('button', 'fbtn'); reload.type = 'button'; reload.append(icon('reload'), 'Reload both'); reload.title = 'Reload Hostfile and Live without the cache and measure again';
+    reload.onclick = () => command('files-reload');
+    const copy = el('button', 'fbtn'); copy.type = 'button'; copy.append(icon('copy'), 'Copy list'); copy.title = 'Copy this list as plain text, for a ticket';
+    copy.onclick = async () => { const result = await command('files-copy'); if (result.ok && result.notice) toast(result.notice); };
+    ch.append(reload, copy);
+  }
+  // A sub tab with problems shows a red count.
+  const counts = tabCounts();
+  for (const [id, label] of [['domains', 'Domains'], ['files', 'Files'], ['speed', 'Speed'], ['checks', 'Checks'], ['html', 'HTML'], ['headers', 'Headers']]) {
+    const b = el('button', '', label); b.type = 'button'; b.setAttribute('aria-pressed', String(diffTab === id)); b.onclick = () => { diffTab = id; renderDifferences(tab, currentView()); };
+    if (counts[id]) { b.append(el('span', 'tcount', String(counts[id]))); b.setAttribute('aria-label', `${label}, ${counts[id]} to look at`); }
+    tabs.append(b);
+  }
   ch.append(tabs);
-  const scroll = el('div', 'dscroll');
-  scroll.append(diffTab === 'domains' ? domainTable(domains) : diffTab === 'html' ? htmlLines(r.html?.hunks || r.html?.lines || []) : headerTable(headerDiffs));
+  const scroll = el('div', ['files', 'speed', 'checks'].includes(diffTab) ? `dscroll ${diffTab}` : 'dscroll');
+  const notCompared = () => el('p', 'dempty', 'Not compared: Live has no page.');
+  scroll.append(diffTab === 'domains' ? domainTable(domains, nl) : diffTab === 'files' ? filesPanel(state.files) : diffTab === 'speed' ? speedPanel(state.speed) : diffTab === 'checks' ? checksPanel(state.checks) : nl ? notCompared() : diffTab === 'html' ? htmlLines(r.html?.hunks || r.html?.lines || []) : headerTable(headerDiffs));
   box2.append(ch, scroll); main.append(head, kpis, box2);
   const side = el('div', 'diff-side'); side.append(el('div', 'lbl', 'Findings'), el('h3', '', 'What stands out'));
-  if (!(r.findings || []).length) side.append(el('div', 'finding', 'No notable differences found.'));
-  for (const f of r.findings || []) { const c = el('div', `finding${f.severity === 'high' ? ' high' : ''}`), t = el('div', 't'); t.append(icon(f.severity === 'info' ? 'info' : 'alert'), el('b', '', f.title || f.text || '')); if (f.detail) c.append(t, el('p', '', f.detail)); else c.append(t); side.append(c); }
+  // What failed to load comes first: it is what the user sees break. Then the checks and the speed.
+  // Why Live could not be reached comes before everything: the rest is judged on the new server alone.
+  const found = [...(state.files?.findings || []), ...pageFindings(r.findings)], allFindings = [...found.filter(f => f.calm), ...found.filter(f => !f.calm)];
+  if (!allFindings.length) side.append(el('div', 'finding', 'No notable differences found.'));
+  for (const f of allFindings) { const c = el('div', `finding${f.calm ? ' calm' : f.severity === 'high' ? ' high' : f.severity === 'both' ? ' both' : ''}`), t = el('div', 't'); t.append(icon(f.calm || f.severity === 'info' ? 'info' : 'alert'), f.calm ? keepNames(f.text) : el('b', '', f.title || f.text || '')); if (f.detail) c.append(t, el('p', '', f.detail)); else c.append(t); side.append(c); }
   const ask = el('button', 'primary ask'); const img = document.createElement('img'); img.src = 'brand/claude.png'; img.alt = ''; ask.append(img, 'Ask Claude about these differences');
   ask.onclick = async () => { const result = await command('differences-ask-claude'); if (result.ok && result.notice) toast(result.notice); };
   side.append(ask, el('p', 'ask-hint', 'Sends this comparison to the Claude panel. Claude keeps working as it does now.'));
   box.replaceChildren(main, side);
+}
+// The sub line can be cut off in a narrow window: the whole card text is in its tooltip.
+function filesCard(f, card) { const c = filesCardFor(f, card), [, big, sub] = c.children; c.title = `Files: ${big.textContent}, ${sub.textContent}`; return c; }
+function filesCardFor(f, card) {
+  if (!f?.measured) return card('Files', f?.measuring ? 'Measuring…' : 'Not measured', 'open Compare to measure', false);
+  const c = f.counts, extra = [c.old && `+${c.old} from old server`, c.both && `+${c.both} on both`].filter(Boolean).join(' · ');
+  if (c.only) return card('Files', `${c.only} failed`, extra || 'only on Hostfile', true);
+  if (c.old) return card('Files', `${c.old} from old server`, c.both ? `+${c.both} on both` : 'no domain rule for their host', true);
+  if (f.measuring) return card('Files', 'Measuring…', 'both servers', false);
+  if (c.both) return card('Files', `${c.both} on both`, 'not a migration difference', false);
+  return card('Files', 'All loaded', 'on both servers', false);
+}
+function fileCell(row) {
+  // Name and Open share one line; a long name is cut off, Open stays visible.
+  const c = el('span', 'fname'), head = el('span', 'fhead'); c.title = row.url; head.append(el('span', 'fn', row.name));
+  if (row.canOpen) {
+    const open = el('button', 'fopen'); open.type = 'button'; open.append(icon('open'), 'Open'); open.title = `Open ${row.url} in a new tab through the new server`;
+    open.setAttribute('aria-label', `Open ${row.name} in a new tab`); open.onclick = () => command('new-tab', row.url); head.append(open);
+  }
+  c.append(head, el('span', 'fpath', row.path)); return c;
+}
+function fileStatus(s, side) { const n = el('span', `fstat${s.failed ? (side === 'both' ? ' both' : ' bad') : ''}`, s.status); if (s.why) n.append(el('span', 'fwhy', s.why)); return n; }
+function oldServerSection(f) {
+  const sec = el('div', 'fsec');
+  f.old.forEach((g, i) => {
+    const head = el('div', 'frule'), text = el('div', ''), one = g.files.length === 1;
+    if (!i) text.append(el('h4', '', 'Loaded from the old server'));
+    text.append(el('p', '', `${g.host} has no domain rule, so the new server pane fetched ${one ? 'this file' : 'these files'} from ${g.ip}${g.ptr ? ` (${g.ptr})` : ''}. ${one ? 'It breaks' : 'They break'} when the old server goes away.`));
+    head.append(text);
+    if (f.ruleIP) {
+      const add = el('button', 'fbtn', `Add rule: ${g.host} → ${f.ruleIP}`); add.type = 'button'; add.title = `Send ${g.host} to the new server as well`;
+      add.onclick = async () => { add.disabled = true; const result = await command('files-add-rule', g.host); if (result.ok && result.notice) toast(result.notice); else add.disabled = false; };
+      head.append(add);
+    }
+    sec.append(head);
+  });
+  const rows = f.old.flatMap(g => g.files.map(file => [fileCell({ ...file, canOpen: false }), file.type, el('span', 'fstat bad', `${file.ip}${file.ptr ? ` · ${file.ptr}` : ''}`), pill('Old server', true)]));
+  sec.append(table(['File', 'Loaded as', 'Served by', ''], rows, rows.map(() => true)));
+  return sec;
+}
+// The Files tab of Differences: what failed per server, what came from the old server, JavaScript errors only on Hostfile.
+function filesPanel(f) {
+  const wrap = el('div', '');
+  if (!f) { wrap.append(el('p', 'dempty', 'Open a website in a Hostfile tab with a domain rule to measure its files.')); return wrap; }
+  if (!f.measured) wrap.append(el('p', 'dempty', 'Open Compare to measure files.'));
+  else if (!f.rows.length) wrap.append(el('p', 'dempty', f.measuring ? 'Measuring both servers…' : 'Every file loaded on both servers.'));
+  else {
+    const pills = { hostfile: () => pill('Only Hostfile', true), both: () => { const p = pill('On both'); p.classList.add('both'); return p; }, live: () => pill('Only Live') };
+    const t = table(['File', 'Loaded as', 'Hostfile', 'Live', ''], f.rows.map(row => [fileCell(row), row.type, fileStatus(row.hostfile, row.side), fileStatus(row.live, row.side), pills[row.side]()]), f.rows.map(row => row.side === 'hostfile'));
+    t.querySelectorAll('tbody tr').forEach((tr, i) => { if (f.rows[i].side === 'both') tr.classList.add('both'); });
+    wrap.append(t);
+  }
+  if (f.measured && (f.rows.length || !f.measuring)) wrap.append(el('p', 'fnote', f.measuring ? 'Measuring both servers…' : `Measured from what the two panes really loaded, also files that scripts and stylesheets request later.${f.dropped ? ` ${f.dropped} more failed files are not listed.` : ''}`));
+  if (f.old.length) wrap.append(oldServerSection(f));
+  if (f.errors.length) {
+    const js = el('div', 'fsec');
+    js.append(el('h4', '', 'JavaScript errors only on Hostfile'), el('p', '', 'Errors that also appear on Live are left out.'));
+    js.append(table(['Error', 'Source'], f.errors.map(e => [el('span', 'fstat bad ferr', e.count > 1 ? `${e.message} (${e.count} times)` : e.message), e.source]), f.errors.map(() => true)));
+    wrap.append(js);
+  }
+  return wrap;
 }
 function table(headers, rows, flags = []) {
   const t = document.createElement('table'), hr = document.createElement('tr'); for (const h of headers) { const th = document.createElement('th'); th.textContent = h; hr.append(th); }
@@ -768,8 +893,12 @@ function table(headers, rows, flags = []) {
   const body = document.createElement('tbody'); rows.forEach((cells, i) => { const tr = document.createElement('tr'); if (flags[i]) tr.className = 'flag'; for (const c of cells) { const td = document.createElement('td'); if (c instanceof Node) td.append(c); else td.textContent = c; tr.append(td); } body.append(tr); }); t.append(body); return t;
 }
 function dot(on) { return el('span', on ? 'y' : 'n0', on ? '●' : '·'); }
-function domainTable(domains) {
+// A host name such as northwind-bakery.test stays on one line instead of breaking at its hyphen.
+function keepNames(text) { const b = el('b', ''); String(text).split(/(\S*-\S*)/).forEach((part, i) => b.append(i % 2 ? el('span', 'nl-nw', part) : part)); return b; }
+function domainTable(domains, noLive) {
   if (!domains.length) return el('p', 'dempty', 'No external domains found.');
+  // Without Live there is nothing to compare: the domains of the new server, without "only on" labels.
+  if (noLive) { const t = table(['Domain', 'Hostfile', 'Loaded as'], domains.map(x => [x.host, dot(x.hostfile), (x.types || []).join(', ')])); t.querySelectorAll('tbody tr').forEach(tr => tr.firstChild.classList.add('m')); return t; }
   const t = table(['Domain', 'Hostfile', 'Live', 'Loaded as', ''], domains.map(x => [x.host, dot(x.hostfile), dot(x.live), (x.types || []).join(', '), x.hostfile && x.live ? pill('Both') : pill(x.live ? 'Only on Live' : 'Only on Hostfile', true)]), domains.map(x => !(x.hostfile && x.live)));
   t.querySelectorAll('tbody tr').forEach(tr => tr.firstChild.classList.add('m')); return t;
 }

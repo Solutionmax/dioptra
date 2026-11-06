@@ -3,7 +3,7 @@ const { detectSite } = require('./site-detect.cjs');
 const { createLibrary } = require('./library.cjs');
 const { randomUUID, X509Certificate } = require('node:crypto');
 const { shareClaudeSession } = require('./claude-session.cjs');
-const { app, BrowserWindow, WebContentsView, ipcMain, session, dialog, Menu, clipboard, shell } = require('electron');
+const { app, BaseWindow, BrowserWindow, WebContentsView, ipcMain, session, dialog, Menu, clipboard, shell } = require('electron');
 const path = require('node:path');
 const dns = require('node:dns').promises;
 const fs = require('node:fs/promises');
@@ -12,7 +12,13 @@ const { directoryName } = require('./claude-install.cjs');
 const { createClaudeUpdates, recoverClaudeUpdate } = require('./claude-update.cjs');
 const { pathToFileURL } = require('node:url');
 const { ptrName, certSummary, daysLeft, ROUTE_BAR_HEIGHT, FOOTER_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, compareLayout, validateRules, expandRules, parseServers, MAX_SERVER_CSV, navigationURL, readSettings, saveSettings, cancelNavigation } = require('./core.cjs');
-const { fetchDocument, buildReport, summaryText } = require('./differences.cjs');
+const { fetchDocument, buildReport, summaryText, isFirstParty } = require('./differences.cjs');
+const { createRecord, responseOutcome, errorOutcome, consoleOutcome, recordFailure, recordLoaded, recordOld, recordError, paneSummary, filesView, filesLines, filesText, header, sameDocument } = require('./resource-check.cjs');
+const { observeRequests } = require('./web-requests.cjs');
+const { createSpeedMeter } = require('./speed-measure.cjs');
+const { speedLines } = require('./speed.cjs');
+const { pageFacts, standardAddresses, checksReport, soloChecksReport, checksLines, tabNoindex } = require('./site-checks.cjs');
+const { liveReason, soloFindings, failingHost, needsAddress } = require('./live-reason.cjs');
 const { dnsReport, canLookup } = require('./dns-records.cjs');
 
 // Keep the original profile through the Hostlane and Dioptra renames.
@@ -56,7 +62,12 @@ let lastSavedSettings = JSON.stringify(config);
 let claude, claudeView, claudeState = { status: 'absent', message: 'Install Claude to use it inside Dioptra.' };
 let claudeReport, claudeUpdates, claudeReopen;
 let comparing = false, viewMode = 'single', livePromise = null, diffRun = null;
-let differences = { status: 'idle', report: null, error: '' };
+// liveReason: why Live could not be reached (no DNS record, refused, no answer); then Speed and Checks judge the new server
+// on its own. liveRetry: Measure Live too or Check Live too is asking Live again.
+let differences = { status: 'idle', report: null, error: '', liveReason: null, liveRetry: false };
+let liveRetry = null;
+// Speed and Checks of the page in Differences, each for one URL; a new comparison or a rule change starts them again.
+let speed = { status: 'idle', url: '', report: null, error: '' }, checks = { status: 'idle', url: '', report: null, error: '' }, speedRun = null, checksRun = null, meter = null, measureHost = null;
 let liveSession, liveProxy, library, comparison = null, paneLayout = [];
 let performance = {memoryKB:null,processes:0};
 function samplePerformance() {
@@ -103,9 +114,9 @@ function applyRules(rules) {
     config.rules = rules; activeRules = structuredClone(rules); activeHosts = nextHosts;
     lastSavedSettings = JSON.stringify(config);
     if (!changed.size) return;
-    diffRun = null; differences = { status: 'idle', report: null, error: '' };
+    diffRun = null; liveRetry = null; differences = { status: 'idle', report: null, error: '', liveReason: null, liveRetry: false }; resetPageChecks();
     const affected = [...tabs.values()].filter(t => t.mode === 'hostfile' && (changed.has(route(t).host) || [...t.requestHosts].some(host => changed.has(host))));
-    for (const t of affected) { t.cancelRuleHistory?.(); t.reloadingRules = true; t.connection = null; t.site = null; t.siteHeaders = {}; t.error = ''; }
+    for (const t of affected) { t.cancelRuleHistory?.(); t.reloadingRules = true; t.connection = null; t.site = null; t.siteHeaders = {}; t.robots = null; t.error = ''; }
     for (const host of changed) certificates.delete(certKey('hostfile', host));
     routingProxy.closeHosts(changed);
     try {
@@ -258,7 +269,7 @@ function persist() {
   if (serialized !== lastSavedSettings) { saveSettings(settingsFile, config); lastSavedSettings = serialized; }
 }
 function state() {
-  return { privateBeta, onboarding: { open: onboardingOpen, step: config.onboardingStep, url: config.onboardingURL }, view: visibleComparison() ? 'compare' : viewMode, routeBarHeight: visibleComparison() ? 0 : ROUTE_BAR_HEIGHT, differences: viewMode === 'differences' ? differences : { ...differences, report: null }, performance, comparison: visibleComparison(), paneLayout, find: findState, sslVerification: config.sslVerification, activeSSL, sslPolicyVersion: config.sslPolicyVersion, sslMigration: config.sslMigration, library: library?.snapshot() || {bookmarks:[],history:[],downloads:[]}, downloads: [...downloadItems.values()].map(d=>d.record), tabs: [...tabs.values()].map(t => ({ mode: t.mode, route: route(t), site: t.site || null, connection: t.connection, id: t.id, title: t.title, url: t.url, startPage: t.startPage, loading: t.loading, devtools: Boolean(t.toolsOpen), error: t.error, certBlocked: t.error && t.certBlocked ? { host: t.certBlocked.host, error: t.certBlocked.error, subject: t.certBlocked.subject } : null, back: t.ruleHistoryIndex !== undefined ? t.ruleHistoryIndex > 0 : t.view.webContents.navigationHistory.canGoBack(), forward: t.ruleHistoryIndex !== undefined ? t.ruleHistoryIndex < t.view.webContents.navigationHistory.length() - 1 : t.view.webContents.navigationHistory.canGoForward() })), activeId, rules: config.rules, activeRules, servers: config.servers, pending: pending(), panel, platform: process.platform, versions: { app: app.getVersion(), electron: process.versions.electron, chromium: process.versions.chrome }, updateFeed: updateFeed(), autoUpdates: config.autoUpdates, update: updateState, devtoolsDock: config.devtoolsDock, devtoolsRatio: config.devtoolsRatio, compareRatio: config.compareRatio, toolsLayout, draggingTools, claude: { ...claudeState, autoCheck: config.claudeAutoCheck, update: claudeUpdates?.state || {status:'idle', version:'', message:'Not checked yet.'} } };
+  return { privateBeta, onboarding: { open: onboardingOpen, step: config.onboardingStep, url: config.onboardingURL }, view: visibleComparison() ? 'compare' : viewMode, routeBarHeight: visibleComparison() ? 0 : ROUTE_BAR_HEIGHT, differences: viewMode === 'differences' ? differences : { ...differences, report: null }, files: viewMode === 'differences' ? differencesFiles() : null, speed: viewMode === 'differences' ? forPage(speed, { progress: meter?.progress() || null }) : null, checks: viewMode === 'differences' ? forPage(checks) : null, performance, comparison: visibleComparison(), paneLayout, find: findState, sslVerification: config.sslVerification, activeSSL, sslPolicyVersion: config.sslPolicyVersion, sslMigration: config.sslMigration, library: library?.snapshot() || {bookmarks:[],history:[],downloads:[]}, downloads: [...downloadItems.values()].map(d=>d.record), tabs: [...tabs.values()].map(t => ({ mode: t.mode, route: route(t), site: t.site || null, connection: t.connection, id: t.id, title: t.title, url: t.url, startPage: t.startPage, loading: t.loading, devtools: Boolean(t.toolsOpen), error: t.error, certBlocked: t.error && t.certBlocked ? { host: t.certBlocked.host, error: t.certBlocked.error, subject: t.certBlocked.subject } : null, files: t.mode === 'auth' ? null : paneSummary(t.files, otherRecord(t)), noindex: noindexOf(t), back: t.ruleHistoryIndex !== undefined ? t.ruleHistoryIndex > 0 : t.view.webContents.navigationHistory.canGoBack(), forward: t.ruleHistoryIndex !== undefined ? t.ruleHistoryIndex < t.view.webContents.navigationHistory.length() - 1 : t.view.webContents.navigationHistory.canGoForward() })), activeId, rules: config.rules, activeRules, servers: config.servers, pending: pending(), panel, platform: process.platform, versions: { app: app.getVersion(), electron: process.versions.electron, chromium: process.versions.chrome }, updateFeed: updateFeed(), autoUpdates: config.autoUpdates, update: updateState, devtoolsDock: config.devtoolsDock, devtoolsRatio: config.devtoolsRatio, compareRatio: config.compareRatio, toolsLayout, draggingTools, claude: { ...claudeState, autoCheck: config.claudeAutoCheck, update: claudeUpdates?.state || {status:'idle', version:'', message:'Not checked yet.'} } };
 }
 function emit() {
   // Tab views are destroyed while quitting; state() must not touch them then.
@@ -368,10 +379,11 @@ function handleShortcut(event,input,tab=current()) {
     if (input.key === 'F12') { event.preventDefault(); toggleDevTools(tab); }
 }
 function bindTab(view, initial = 'about:blank', load = true, foreground = true) {
-  const tab = { mode: view.webContents.session === liveSession ? 'live' : view.webContents.session === claudeAuthSession ? 'auth' : 'hostfile', connection: null, requestHosts: new Set(), id: nextId++, view, url: initial, startPage: load && initial === 'about:blank', title: 'New tab', loading: false, error: '' };
+  const tab = { mode: view.webContents.session === liveSession ? 'live' : view.webContents.session === claudeAuthSession ? 'auth' : 'hostfile', connection: null, requestHosts: new Set(), files: createRecord(), id: nextId++, view, url: initial, startPage: load && initial === 'about:blank', title: 'New tab', loading: false, error: '' };
   tabs.set(tab.id, tab); win.contentView.addChildView(view);
   const wc = view.webContents;
   claude?.bind(tab);
+  watchFiles(wc, tab);
   wc.on('certificate-error', (event, url, error, certificate, callback, isMainFrame) => {
     event.preventDefault();
     const host = new URL(url).hostname.toLowerCase(), print = fingerprint(certificate);
@@ -392,7 +404,10 @@ function bindTab(view, initial = 'about:blank', load = true, foreground = true) 
   wc.on('did-start-loading', () => { tab.loading = true; emit(); });
   wc.on('did-stop-loading', () => { tab.loading = false; if (!tab.reloadingRules && !tab.error && allowed(wc.getURL())) { tab.url = wc.getURL(); if(tab.mode !== 'auth') library.visit(tab.url, wc.getTitle()); persist(); inspectSite(tab); } emit(); });
   wc.on('did-start-navigation', (_event, url, inPlace, isMainFrame) => {
-    if (isMainFrame && !inPlace && !tab.reloadingRules) { if (tab.id === activeId) viewMode = 'single'; tab.requestHosts.clear(); tab.certBlocked = null; try { certificates.delete(certKey(tab.mode, new URL(url).hostname)); } catch {} tab.navStart = Date.now(); tab.connection = null; tab.site = null; tab.siteHeaders = {}; tab.url = url; if (url !== 'about:blank') tab.startPage = false; tab.error = ''; layout(); emit(); }
+    if (!isMainFrame || inPlace) return;
+    // A new document: what failed belongs to the page that is now loading. Reload both keeps Differences open.
+    const keepView = tab.keepView; tab.keepView = false; tab.files = createRecord(); filesChanged();
+    if (!tab.reloadingRules) { if (tab.id === activeId && !keepView) viewMode = 'single'; tab.requestHosts.clear(); tab.certBlocked = null; try { certificates.delete(certKey(tab.mode, new URL(url).hostname)); } catch {} tab.navStart = Date.now(); tab.connection = null; tab.site = null; tab.siteHeaders = {}; tab.robots = null; tab.url = url; if (url !== 'about:blank') tab.startPage = false; tab.error = ''; layout(); emit(); }
   });
   const navigated = (_event, url) => { if (tab.reloadingRules) return; tab.url = url; tab.error = ''; persist(); layout(); emit(); };
   wc.on('did-navigate', navigated);
@@ -406,7 +421,7 @@ function bindTab(view, initial = 'about:blank', load = true, foreground = true) 
   wc.once('destroyed', () => {
     if (quitting || !tabs.has(tab.id)) return;
     if (authRequest?.webContentsId === wc.id) finishAuth(null);
-    if (comparison && [comparison.host, comparison.live].includes(tab.id)) comparison = null;
+    if (comparison && [comparison.host, comparison.live].includes(tab.id)) { keepPeer(comparison); comparison = null; }
     disposeDevTools(tab); tabs.delete(tab.id); win.contentView.removeChildView(tab.view);
     if (!tabs.size) newTab();
     else if (activeId === tab.id) activate([...tabs.keys()].at(-1));
@@ -443,7 +458,7 @@ function newTab(url = 'about:blank', foreground = true, mode = 'hostfile') {
 function closeTab(id) {
   const tab = tabs.get(id); if (!tab) return;
   if (tab.mode !== 'auth' && /^https?:/.test(tab.url)) { closedTabs.push({url:tab.url,mode:tab.mode}); if(closedTabs.length>25) closedTabs.shift(); }
-  if (comparison && [comparison.host, comparison.live].includes(id)) comparison = null;
+  if (comparison && [comparison.host, comparison.live].includes(id)) { keepPeer(comparison); comparison = null; }
   if (authRequest?.webContentsId === tab.view.webContents.id) finishAuth(null);
   disposeDevTools(tab); win.contentView.removeChildView(tab.view); tabs.delete(id); tab.view.webContents.close();
   if (!tabs.size) newTab();
@@ -529,7 +544,7 @@ function ensureLive() {
   })().catch(error => { livePromise=null; throw error; });
   return livePromise;
 }
-function stopCompare() { const pair=comparison; comparison=null; if(pair) {activate(pair.host);closeTab(pair.live);} layout(); }
+function stopCompare() { const pair=comparison; comparison=null; if(pair) {keepPeer(pair);activate(pair.host);closeTab(pair.live);} layout(); }
 // The tab that Differences works on: a Hostfile tab on a domain with an active rule.
 function ruledTab(what) {
   const tab=visibleComparison() ? tabs.get(comparison.host) : current();
@@ -546,22 +561,146 @@ async function setView(mode) {
   closeFind(); viewMode='differences'; layout(); emit();
   if (differences.report?.url !== tab.url || differences.report?.hostfile?.ip !== rule.ip || differences.status === 'error') runDifferences().catch(() => {});
 }
+// The routes of Differences: Hostfile goes to the IP of the rule (Skip SSL as the rule says), Live through normal DNS and
+// trusts only a certificate the user chose Continue anyway for.
+const hostfileRoute = host => ({ ip: activeHosts.find(r => r.enabled && r.domain === host)?.ip, skipSSL: skipCertificate(host) });
+const liveRoute = host => (liveExceptions.has(host) ? { pin: liveExceptions.get(host) } : null);
 function runDifferences() {
   const { tab } = ruledTab('compare'), url = tab.url;
   if (diffRun?.url === url) return diffRun.promise;
   const mine = { url };
-  differences = { status: 'running', report: null, error: '' }; emit();
+  liveRetry = null; differences = { status: 'running', report: null, error: '', liveReason: null, liveRetry: false }; emit();
   mine.promise = (async () => {
     try {
       await ensureLive();
-      const [hostfile, live] = await Promise.all([fetchDocument(webSession, url, { resolveRoute: host => ({ ip: activeHosts.find(r => r.enabled && r.domain === host)?.ip, skipSSL: skipCertificate(host) }) }), fetchDocument(liveSession, url, { resolveRoute: host => liveExceptions.has(host) ? { pin: liveExceptions.get(host) } : null })]);
+      const [hostfile, live] = await Promise.all([fetchDocument(webSession, url, { resolveRoute: hostfileRoute }), fetchDocument(liveSession, url, { resolveRoute: liveRoute })]);
       const report = buildReport({ url, hostfile, live });
-      if (diffRun === mine) differences = { status: 'done', report, error: '' };
+      // The new server answers and Live cannot be reached: say why, and judge the new server on its own.
+      const reason = hostfile.ok ? await reasonFor(url, live) : null;
+      if (reason) report.findings = soloFindings(report.findings, reason);
+      report.counts.findings = report.findings.length;
+      if (diffRun === mine) { differences = { status: 'done', report, error: '', liveReason: reason, liveRetry: false }; afterDifferences(url, hostfile, live); }
       return report;
-    } catch (error) { if (diffRun === mine) differences = { status: 'error', report: null, error: error.message }; throw error; }
+    } catch (error) { if (diffRun === mine) differences = { status: 'error', report: null, error: error.message, liveReason: null, liveRetry: false }; throw error; }
     finally { if (diffRun === mine) diffRun = null; emit(); }
   })();
   diffRun = mine; return mine.promise;
+}
+// Why Live failed, or null when it answered or failed in another way (a certificate keeps Continue anyway). A refused or
+// silent server's error often names no address: one dns.lookup of the host that failed, at most 2 seconds.
+async function reasonFor(url, live) {
+  if (live.ok) return null;
+  const lookup = host => Promise.race([dns.lookup(host).then(r => r.address, () => ''), new Promise(resolve => setTimeout(resolve, 2000, ''))]);
+  const ip = needsAddress(live) ? await lookup(failingHost(url, live)) : '';
+  return liveReason(live, { url, ip, checkedAt: new Date().toISOString() });
+}
+// Differences already knows that Live cannot be reached for this page: Speed and Checks leave Live alone.
+const liveUnreachable = url => Boolean(differences.status === 'done' && differences.liveReason && differences.report && sameDocument(differences.report.url, url));
+// Measure Live too and Check Live too: ask Live again first. When it answers, the normal comparison runs (both servers,
+// then checks and speed); when it does not, only the reason is updated and the results of the new server stay.
+function retryLive() {
+  const { tab } = ruledTab('compare'), url = tab.url, known = differences.report;
+  if (diffRun) return diffRun.promise;
+  if (!liveUnreachable(url)) return runDifferences();
+  if (liveRetry?.url === url) return liveRetry.promise;
+  const mine = liveRetry = { url };
+  differences = { ...differences, liveRetry: true }; emit();
+  mine.promise = (async () => {
+    try {
+      await ensureLive();
+      const live = await fetchDocument(liveSession, url, { resolveRoute: liveRoute });
+      if (liveRetry !== mine || differences.report !== known) return null;
+      const reason = await reasonFor(url, live);
+      if (liveRetry !== mine || differences.report !== known) return null;
+      liveRetry = null;
+      // Live answers now, or fails another way (for example its certificate): the normal comparison shows it.
+      if (!reason) return runDifferences();
+      const { body: _body, headers: _headers, ...rest } = live, findings = soloFindings(known.findings, reason);
+      differences = { ...differences, report: { ...known, live: rest, findings, counts: { ...known.counts, findings: findings.length } }, liveReason: reason, liveRetry: false };
+      return differences.report;
+    } finally {
+      if (liveRetry === mine) liveRetry = null;
+      if (differences.liveRetry && !liveRetry) differences = { ...differences, liveRetry: false };
+      emit();
+    }
+  })();
+  return mine.promise;
+}
+// Speed and Checks belong to one URL: the window only gets them for the page it shows.
+function forPage(run, extra = {}) {
+  const tab = current();
+  return tab && run.url && sameDocument(run.url, tab.url) ? { ...run, ...extra } : { status: 'idle', url: '', report: null, error: '' };
+}
+function resetPageChecks() {
+  speedRun = null; checksRun = null; meter?.cancel();
+  speed = { status: 'idle', url: '', report: null, error: '' }; checks = { status: 'idle', url: '', report: null, error: '' };
+}
+// After a comparison: first the checks (a few small requests), then the speed loads, so the checks do not slow down
+// the servers while they are measured.
+function afterDifferences(url, hostfile, live) {
+  resetPageChecks();
+  const mine = checksRun = { url }, solo = liveUnreachable(url);
+  checks = { status: 'running', url, report: null, error: '' }; speed = { status: 'waiting', url, report: null, error: '' }; emit();
+  (solo ? runSoloChecks(url, hostfile) : runChecks(url, hostfile, live)).then(report => { if (checksRun === mine) checks = { status: 'done', url, report, error: '' }; },
+    error => { if (checksRun === mine) checks = { status: 'error', url, report: null, error: String(error.message || error).slice(0, 300) }; })
+    .finally(() => { if (checksRun !== mine) return; checksRun = null; emit(); measureSpeed(url); });
+}
+// Anonymous, bounded requests through the routes of Differences: at most 9 addresses, two at a time on both servers,
+// redirects not followed, 8 seconds and 256 KB each.
+const CHECK_TIMEOUT_MS = 8000, CHECK_BODY = 256 * 1024, CHECK_BATCH = 2;
+async function inBatches(items, fn) {
+  const out = [];
+  for (let i = 0; i < items.length; i += CHECK_BATCH) out.push(...await Promise.all(items.slice(i, i + CHECK_BATCH).map(fn)));
+  return out;
+}
+// Other copies of the site: hosts with a disabled rule or a rule to another server.
+function copiesOf(host) {
+  const rule = activeHosts.find(r => r.enabled && r.domain === host);
+  return config.rules.filter(r => r.domain !== host && (!r.enabled || r.ip !== rule?.ip)).map(r => r.domain);
+}
+// Each card gets an id: a Copy button names its card and main copies its own text, never text from the window.
+function cardIds(report) { report.groups.forEach(g => g.items.forEach((c, i) => { c.id = `${g.id}-${i}`; })); return report; }
+// Live cannot be reached: the same bounded requests, to the new server only (www to bare waits for Live).
+async function runSoloChecks(url, hostfile) {
+  if (!hostfile.ok) throw new Error('The page could not be fetched from the new server, so the checks did not run.');
+  const ask = target => fetchDocument(webSession, target, { redirects: 0, maxBody: CHECK_BODY, timeout: CHECK_TIMEOUT_MS, resolveRoute: hostfileRoute });
+  const page = new URL(url), robots = await ask(`${page.origin}/robots.txt`), wordpress = pageFacts(hostfile.body, url).wordpress;
+  // The sitemap address comes from the robots.txt of the new server.
+  const list = standardAddresses({ pageURL: url, hostfileHTML: hostfile.body, wordpress, robotsLive: robots.body, routed: host => activeHosts.some(r => r.enabled && r.domain === host), random: randomUUID().slice(0, 8) });
+  const answers = new Map(await inBatches(list.filter(c => c.id !== 'www'), async check => [check, check.id === 'robots' ? robots : await ask(check.url)]));
+  return cardIds(soloChecksReport({ pageURL: url, hostfile, standard: list.map(check => ({ check, hostfile: answers.get(check) })), copies: copiesOf(page.hostname) }));
+}
+async function runChecks(url, hostfile, live) {
+  // Without the page of both servers every check would pass on an empty page.
+  if (!hostfile.ok || !live.ok) throw new Error(`The page could not be fetched from ${!hostfile.ok ? 'the new server' : 'Live'}, so the checks did not run.`);
+  await ensureLive();
+  const options = { redirects: 0, maxBody: CHECK_BODY, timeout: CHECK_TIMEOUT_MS };
+  const ask = target => Promise.all([fetchDocument(webSession, target, { ...options, resolveRoute: hostfileRoute }), fetchDocument(liveSession, target, { ...options, resolveRoute: liveRoute })]);
+  const page = new URL(url), robots = await ask(`${page.origin}/robots.txt`);
+  const wordpress = pageFacts(hostfile.body, url).wordpress || pageFacts(live.body, url).wordpress;
+  const list = standardAddresses({ pageURL: url, hostfileHTML: hostfile.body, liveHTML: live.body, wordpress, robotsLive: robots[1].body, routed: host => activeHosts.some(r => r.enabled && r.domain === host), random: randomUUID().slice(0, 8) });
+  const standard = await inBatches(list, async check => { const [h, l] = check.id === 'robots' ? robots : await ask(check.url); return { check, hostfile: h, live: l }; });
+  const copies = copiesOf(page.hostname);
+  // The old server's own name (reverse DNS), where a temporary URL such as /~user/ of the hosting account lives.
+  const oldName = live.ip ? await Promise.race([reverseName(bareIP(live.ip)), new Promise(resolve => setTimeout(resolve, 2000, ''))]) : '';
+  return cardIds(checksReport({ pageURL: url, hostfile, live, standard, oldIP: live.ip, oldHosts: [oldName].filter(Boolean), copies }));
+}
+function measureSpeed(url) {
+  if (!meter || speedRun?.url === url) return;
+  const mine = speedRun = { url }, live = !liveUnreachable(url);
+  speed = { status: 'running', url, report: null, error: '' }; emit();
+  ensureLive().then(() => (speedRun === mine ? meter.measure(url, { live }) : null)).then(report => { if (speedRun === mine) speed = { status: 'done', url, report, error: '' }; },
+    error => { if (speedRun === mine) speed = { status: 'error', url, report: null, error: String(error.message === 'cancelled' ? 'The measurement was stopped.' : error.message || error).slice(0, 300) }; })
+    .finally(() => { if (speedRun === mine) { speedRun = null; emit(); } });
+}
+// Noindex of the page as it loaded in a Hostfile tab with a rule: red, or orange when Live says noindex too (the Live
+// pane of Compare, or the checks of this page). Unknown Live counts as red: the new server is the one that says it.
+const tabSays = t => Boolean(t && tabNoindex(t.robots, header(t.siteHeaders, 'x-robots-tag')));
+function noindexOf(tab) {
+  if (tab.mode !== 'hostfile' || tab.startPage || !route(tab).configured || !tabSays(tab)) return '';
+  const live = comparison && comparison.host === tab.id ? tabs.get(comparison.live) : null;
+  if (live && sameDocument(live.url, tab.url) && !live.loading) return tabSays(live) ? 'both' : 'worse';
+  return checks.report && sameDocument(checks.url, tab.url) && checks.report.noindex === 'both' ? 'both' : 'worse';
 }
 async function clearSiteData() {
   const tab = current(); let url; try { url = new URL(tab.url); } catch {}
@@ -597,7 +736,7 @@ async function compare() {
   } finally { comparing=false; }
 }
 // What the page gives away about its platform; read in an isolated world so the page cannot see or change the probe.
-const SITE_PROBE = `({ generators: [...document.querySelectorAll('meta[name="generator" i]')].slice(0, 20).map(m => String(m.content).slice(0, 200)), urls: [...document.querySelectorAll('script[src],link[href],img[src]')].slice(0, 600).map(n => String(n.src || n.href).slice(0, 400)) })`;
+const SITE_PROBE = `({ generators: [...document.querySelectorAll('meta[name="generator" i]')].slice(0, 20).map(m => String(m.content).slice(0, 200)), robots: [...document.querySelectorAll('meta[name="robots" i],meta[name="googlebot" i]')].slice(0, 5).map(m => String(m.content).slice(0, 200)), urls: [...document.querySelectorAll('script[src],link[href],img[src]')].slice(0, 600).map(n => String(n.src || n.href).slice(0, 400)) })`;
 async function inspectSite(tab) {
   const wc = tab.view.webContents, url = wc.getURL();
   if (tab.mode === 'auth' || !/^https?:\/\//i.test(url)) return;
@@ -605,20 +744,24 @@ async function inspectSite(tab) {
     const page = await wc.executeJavaScriptInIsolatedWorld(1005, [{ code: SITE_PROBE }]);
     const cookies = (await wc.session.cookies.get({ url })).map(c => c.name);
     if (wc.isDestroyed() || wc.getURL() !== url) return;
-    tab.site = detectSite({ headers: tab.siteHeaders, cookies, ...page }); emit();
+    tab.site = detectSite({ headers: tab.siteHeaders, cookies, ...page }); tab.robots = Array.isArray(page.robots) ? page.robots : []; emit();
   } catch (error) {
     // Expected when the page navigates away or closes mid-probe; the next load probes again.
     if (process.env.DIOPTRA_DEBUG) console.error('site probe failed:', error.message);
   }
 }
 function observeConnections(ses) {
+  observeRequests(ses, 'onErrorOccurred', details => fileTraffic(details, true));
   ses.webRequest.onBeforeRequest((details, callback) => {
     const tab = [...tabs.values()].find(t => t.view.webContents?.id === details.webContentsId);
     if (tab && /^https?:|^wss?:/.test(details.url)) tab.requestHosts.add(new URL(details.url).hostname);
     callback({ cancel: false });
   });
-  // Does not replace Claude's onCompleted/onBeforeSendHeaders handlers.
+  // Does not replace Claude's onBeforeSendHeaders handler; onCompleted and onErrorOccurred go through web-requests.cjs.
   ses.webRequest.onResponseStarted(details => {
+    // Status of every file here, not in onCompleted: Blink cancels a stylesheet or script with a 4xx or 5xx status as soon as it
+    // sees the headers, and then onCompleted never comes (net::ERR_ABORTED instead), at random (measured 5 Nov 2026).
+    fileTraffic(details, false);
     if (details.resourceType !== 'mainFrame' || details.statusCode >= 300 && details.statusCode < 400 && details.statusCode !== 304) return;
     const tab=[...tabs.values()].find(t=>t.view.webContents?.id===details.webContentsId);
     if (!tab) return;
@@ -633,13 +776,143 @@ function observeConnections(ses) {
     if (connection.ip && !connection.ip.includes(',')) reverseName(connection.ip).then(name => { if (name && tab.connection === connection) { connection.hostname = name; emit(); } });
   });
 }
+// Files that did not load. Each pane keeps tab.files (resource-check.cjs), new for every main frame document. Opening
+// Differences closes the Live pane, so its record stays with the Hostfile tab as tab.peer, valid while both show one URL.
+let filesTimer = null, probe = null;
+const PROBE_SETTLE_MS = 2500, PROBE_TIMEOUT_MS = 30000;
+const bareIP = ip => String(ip || '').replace(/^\[|\]$/g, '').replace(/^::ffff:/i, '').toLowerCase();
+// A page can fail dozens of requests in a burst; the window gets one state update per quarter second.
+function filesChanged() { if (!filesTimer) filesTimer = setTimeout(() => { filesTimer = null; emit(); }, 250); }
+function paneFor(id) {
+  if (id === undefined) return null;
+  if (probe && !probe.view.webContents.isDestroyed() && probe.view.webContents.id === id) return probe;
+  const tab = [...tabs.values()].find(t => t.view.webContents?.id === id);
+  return tab && tab.mode !== 'auth' ? tab : null;
+}
+function watchFiles(wc, pane) {
+  wc.on('console-message', details => {
+    const outcome = consoleOutcome(details);
+    if (!outcome) return;
+    if (outcome.file) recordFailure(pane.files, outcome.file); else recordError(pane.files, outcome.error);
+    filesChanged();
+  });
+}
+function fileTraffic(details, failed) {
+  const pane = paneFor(details.webContentsId);
+  if (!pane) return;
+  const record = pane.files;
+  if (!failed && details.resourceType === 'mainFrame') { record.pageServer = header(details.responseHeaders, 'server'); return; }
+  const outcome = failed ? errorOutcome(details) : responseOutcome(details);
+  if (!outcome) return;
+  if (outcome.failed) recordFailure(record, outcome); else recordLoaded(record, outcome);
+  if (!failed && pane.mode === 'hostfile') fromOldServer(pane, record, outcome);
+  filesChanged();
+}
+// The old server is what normal DNS gives for the page host itself. A CDN host of the same site is not the old server
+// and does not break with it, so only files served from one of these addresses count. Asked once a minute per host.
+const publicIPs = new Map();
+function publicAddresses(host) {
+  const known = publicIPs.get(host);
+  if (known && Date.now() - known.at < 60000) return known.addresses;
+  if (publicIPs.size > 100) publicIPs.clear();
+  const addresses = dns.lookup(host, { all: true }).then(list => new Set(list.map(a => bareIP(a.address))), () => new Set());
+  publicIPs.set(host, { at: Date.now(), addresses });
+  return addresses;
+}
+// A host of the same site without an enabled rule goes through normal DNS, so a Hostfile tab can still load it from the old server.
+function fromOldServer(tab, record, outcome) {
+  let url; try { url = new URL(outcome.url); } catch { return; }
+  const host = url.hostname.toLowerCase(), pageHost = route(tab).host.toLowerCase(), rule = activeHosts.find(r => r.enabled && r.domain === pageHost);
+  if (!rule || host === pageHost || !isFirstParty(host, pageHost) || protectedHost(host) || activeHosts.some(r => r.enabled && r.domain === host)) return;
+  const add = async ip => {
+    const address = bareIP(ip);
+    if (!address || address === bareIP(rule.ip) || !(await publicAddresses(pageHost)).has(address) || record.old.has(outcome.key)) return;
+    const item = { key: outcome.key, url: outcome.url, type: outcome.type, host, ip: address, ptr: '' };
+    recordOld(record, item); filesChanged();
+    reverseName(address).then(name => { if (name) { item.ptr = name; filesChanged(); } });
+  };
+  // The routing proxy knows the server it connected to; a closed connection falls back to the same OS lookup it used.
+  const seen = routingProxy.addresses(host, Number(url.port || (/^(https|wss):$/.test(url.protocol) ? 443 : 80)));
+  if (seen.length) add(seen[0]); else dns.lookup(host).then(found => add(found.address), () => {});
+}
+function keepPeer(pair) {
+  const host = tabs.get(pair.host), live = tabs.get(pair.live);
+  if (host && live && sameDocument(host.url, live.url)) host.peer = { url: live.url, record: live.files, measuring: false };
+}
+// The record of the other side of the same page: the other pane of a comparison, or the Live record the Hostfile tab kept.
+function otherRecord(tab) {
+  if (comparison && [comparison.host, comparison.live].includes(tab.id)) {
+    const other = tabs.get(tab.id === comparison.host ? comparison.live : comparison.host);
+    return other && sameDocument(other.url, tab.url) ? other.files : null;
+  }
+  return tab.mode === 'hostfile' && tab.peer && sameDocument(tab.peer.url, tab.url) ? tab.peer.record : null;
+}
+function differencesFiles() {
+  const tab = current();
+  if (!tab || tab.mode !== 'hostfile' || !/^https?:/.test(tab.url)) return null;
+  const rule = activeHosts.find(r => r.enabled && r.domain === route(tab).host), peer = tab.peer && sameDocument(tab.peer.url, tab.url) ? tab.peer : null;
+  return filesView({ hostfile: tab.files, live: peer?.record || null, pageURL: tab.url, ruleIP: rule?.ip || '', measuring: Boolean(tab.loading || peer?.measuring) });
+}
+function closeProbe() {
+  const mine = probe;
+  if (!mine) return;
+  probe = null; clearTimeout(mine.timer); clearTimeout(mine.settle); mine.peer.measuring = false;
+  if (win && !win.isDestroyed()) win.contentView.removeChildView(mine.view);
+  if (!mine.view.webContents.isDestroyed()) mine.view.webContents.close();
+  filesChanged();
+}
+// Reload both from Differences, where the Live pane is closed: a hidden Live view loads the page once, the same way the
+// Live pane would (Live session, normal DNS, sandboxed, muted, no popups or downloads), and is closed when the page settles.
+async function measureLive(tab) {
+  await ensureLive();
+  closeProbe();
+  if (!tabs.has(tab.id) || !win || win.isDestroyed()) return;
+  const view = new WebContentsView({ webPreferences: { session: liveSession, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true } });
+  const wc = view.webContents, peer = { url: tab.url, record: createRecord(), measuring: true };
+  const mine = probe = { view, mode: 'live', files: peer.record, peer };
+  tab.peer = peer;
+  wc.setAudioMuted(true);
+  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+  wc.on('certificate-error', (event, url, _error, certificate, callback) => {
+    event.preventDefault();
+    let host = ''; try { host = new URL(url).hostname.toLowerCase(); } catch {}
+    // Only a certificate the user chose Continue anyway for; answered a tick later (Electron 45 wss:// crash, see bindTab).
+    const trusted = Boolean(host) && !protectedHost(host) && liveExceptions.get(host) === fingerprint(certificate);
+    setImmediate(() => callback(trusted));
+  });
+  watchFiles(wc, mine);
+  wc.on('did-stop-loading', () => { clearTimeout(mine.settle); mine.settle = setTimeout(() => { if (probe === mine) closeProbe(); }, PROBE_SETTLE_MS); });
+  mine.timer = setTimeout(() => { if (probe === mine) closeProbe(); }, PROBE_TIMEOUT_MS);
+  view.setVisible(false); win.contentView.addChildView(view); view.setBounds(tab.view.getBounds());
+  wc.loadURL(tab.url).catch(() => {});
+  filesChanged();
+}
+async function reloadBoth() {
+  const pair = visibleComparison();
+  if (pair) { for (const id of [pair.host, pair.live]) reloadTab(tabs.get(id), true); return; }
+  const { tab } = ruledTab('measure');
+  tab.keepView = viewMode === 'differences';
+  reloadTab(tab, true);
+  await measureLive(tab);
+}
+// "Add rule" next to files from the old server: the host must be one this page really loaded from the old server.
+async function addFilesRule(host) {
+  const { tab, rule } = ruledTab('add a rule for');
+  if (![...tab.files.old.values()].some(o => o.host === host)) throw new Error('This page did not load files from that host through the old server.');
+  const index = config.rules.findIndex(r => r.domain === host || r.www && `www.${r.domain}` === host);
+  const rules = index >= 0 ? config.rules.map((r, i) => (i === index ? { ...r, ip: rule.ip, enabled: true } : r)) : [...config.rules, { domain: host, ip: rule.ip, enabled: true }];
+  await applyRules(validateRules(rules));
+  if (viewMode === 'differences') runDifferences().catch(() => {});
+  return { host, ip: rule.ip };
+}
 function setupWebsiteSession(ses) {
   ses.setPermissionCheckHandler(()=>false);
   ses.setPermissionRequestHandler(async (wc,permission,callback,details)=>{
     if(![...tabs.values()].some(t=>t.view.webContents===wc) || !['media','geolocation','notifications','clipboard-read','fullscreen','pointerLock'].includes(permission)) return callback(false);
     const answer=await dialog.showMessageBox(win,{type:'question',message:'Website requests permission',detail:`${details.requestingUrl || wc.getURL()}\n\n${permission}`,buttons:['Deny','Allow once'],defaultId:0,cancelId:0});callback(answer.response===1);
   });
-  ses.on('will-download', (_event,item)=>{
+  ses.on('will-download', (_event,item,source)=>{
+    if ((probe && source === probe.view.webContents) || meter?.owns(source)) { item.cancel(); return; } // the hidden Live measurement and the speed windows never save files
     item.setSaveDialogOptions({title:'Save file',defaultPath:path.join(app.getPath('downloads'),path.basename(item.getFilename()))});
     const id=randomUUID();
     const record={id,name:item.getFilename(),url:item.getURL(),path:'',state:'progressing',received:0,total:item.getTotalBytes(),paused:false,canResume:false};
@@ -714,14 +987,35 @@ ipcMain.handle('browser', async (event, action, data) => {
       }
       case 'view': await setView(data); break;
       case 'differences-run': return { ok: true, report: await runDifferences() };
+      case 'live-retry': await retryLive(); break;
       case 'differences-ask-claude': {
         if (!differences.report) throw new Error('Run Differences first.');
-        clipboard.writeText(summaryText(differences.report));
+        clipboard.writeText(summaryText(differences.report, [...filesLines(differencesFiles()), ...checksLines(forPage(checks).report), ...speedLines(forPage(speed).report)]));
         // Same route as the toolbar button; the summary is only copied, never injected into the extension.
         if (claudeState.status === 'ready') { await openClaudePanel(); claude.clicked(current()); panel = 'claude'; layout(); emit(); }
         return { ok: true, notice: 'Summary copied. Paste it into Claude.' };
       }
       case 'clear-site-data': { const host = await clearSiteData(); return { ok: true, notice: `Cleared site data for ${host}.` }; }
+      case 'files-reload': await reloadBoth(); break;
+      case 'speed-measure': { const { tab: page } = ruledTab('measure'); if (speedRun?.url !== page.url) { speedRun = null; meter?.cancel(); measureSpeed(page.url); } break; }
+      case 'checks-copy': {
+        const found = forPage(checks).report?.groups.flatMap(g => g.items).find(c => c.id === data?.card);
+        if (!found) throw new Error('Run the checks first.');
+        const one = Number.isInteger(data?.command), text = one ? found.commands?.[data.command]?.command : found.action?.text;
+        if (!text) throw new Error('Nothing to copy.');
+        clipboard.writeText(text);
+        return { ok: true, notice: one ? 'Command copied. Run it on the new server.' : found.group === 'old' ? 'Commands copied. Run them on the new server.' : 'Copied.' };
+      }
+      case 'files-copy': {
+        const view = differencesFiles();
+        if (!view) throw new Error('Open Differences on a Hostfile tab first.');
+        clipboard.writeText(filesText(view, current().url));
+        return { ok: true, notice: 'List copied.' };
+      }
+      case 'files-add-rule': {
+        const added = await addFilesRule(String(data || '').toLowerCase());
+        emit(); return { ok: true, notice: `Rule added: ${added.host} → ${added.ip}. The page reloads through the new server.` };
+      }
       case 'open-release': if (privateBeta) { updateState = localBetaUpdate(); panel = 'updates'; layout(); } else await shell.openExternal(RELEASE_PAGE); break;
       case 'installation-help': await shell.openExternal('https://support.apple.com/en-us/102445'); break;
       case 'onboarding-open':
@@ -784,7 +1078,7 @@ ipcMain.handle('browser', async (event, action, data) => {
       case 'trust-certificate': {
         const target = tabs.get(Number(data)), blocked = target?.certBlocked;
         if (!blocked || target.mode !== 'live' || protectedHost(blocked.host)) throw new Error('There is no refused certificate to continue with.');
-        liveExceptions.set(blocked.host, blocked.print); target.certBlocked = null; target.error = ''; differences = { status: 'idle', report: null, error: '' }; layout();
+        liveExceptions.set(blocked.host, blocked.print); target.certBlocked = null; target.error = ''; liveRetry = null; differences = { status: 'idle', report: null, error: '', liveReason: null, liveRetry: false }; layout();
         target.view.webContents.loadURL(target.url).catch(error => { if (error.code !== 'ERR_ABORTED' && error.errno !== -3) failure(target, error.message); });
         break;
       }
@@ -912,15 +1206,19 @@ else {
     observeConnections(claudeAuthSession);
     claudeAuthSession.setPermissionCheckHandler(() => false);
     claudeAuthSession.setPermissionRequestHandler((_wc,_permission,callback) => callback(false));
+    // The hidden window that holds the offscreen speed views (speed-measure.cjs); made before the main window, never shown.
+    measureHost = new BaseWindow({ show: false, width: 1280, height: 720, focusable: false, skipTaskbar: true, title: 'Dioptra measurement' });
     win = new BrowserWindow({ width: 1380, height: 900, minWidth: 960, minHeight: 640, title: 'Dioptra', backgroundColor: '#f6f8fb', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false } });
     win.webContents.on('before-input-event',(event,input)=>handleShortcut(event,input));
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', event => event.preventDefault());
     win.on('resize', () => { layout(); emit(); });
     win.on('blur', () => { if (draggingTools) { draggingTools = false; layout(); emit(); } });
-    win.on('close', () => { persist(); quitting = true; if (authRequest) finishAuth(null); for (const t of tabs.values()) { disposeDevTools(t); t.view.webContents.close(); } });
+    win.on('close', () => { persist(); quitting = true; closeProbe(); meter?.cancel(); if (authRequest) finishAuth(null); for (const t of tabs.values()) { disposeDevTools(t); t.view.webContents.close(); } });
     win.on('closed', () => { liveProxy?.close(); routingProxy?.close(); win = null; app.quit(); });
     setupWebsiteSession(webSession);
+    meter = createSpeedMeter({ WebContentsView, host: () => measureHost, sessions: () => ({ hostfile: webSession, live: liveSession }), changed: filesChanged,
+      trust: (side, host, certificate) => (side === 'hostfile' ? skipCertificate(host) : !protectedHost(host) && liveExceptions.get(host) === fingerprint(certificate)) });
     app.on('login', (event, wc, details, authInfo, callback) => {
       if (![...tabs.values()].some(t => t.view.webContents === wc)) return;
       event.preventDefault();

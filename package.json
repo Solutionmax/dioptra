@@ -2,7 +2,7 @@
   "name": "migratiebrowser",
   "productName": "Dioptra",
   "desktopName": "migratiebrowser.desktop",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "A browser with per-domain IP overrides for migration testing",
   "author": {
     "name": "SolutionMAX",
@@ -13,7 +13,7 @@
   "main": "src/main.cjs",
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/core.test.cjs test/crx.test.cjs test/claude-network.test.cjs test/library.test.cjs test/live-proxy.test.cjs test/differences.test.cjs test/site-detect.test.cjs test/dns-records.test.cjs test/claude-update.test.cjs",
+    "test": "node --test test/core.test.cjs test/crx.test.cjs test/claude-network.test.cjs test/library.test.cjs test/live-proxy.test.cjs test/differences.test.cjs test/site-detect.test.cjs test/dns-records.test.cjs test/claude-update.test.cjs test/resource-check.test.cjs test/web-requests.test.cjs test/speed.test.cjs test/site-checks.test.cjs test/live-reason.test.cjs",
     "test:site": "node test/site-data.cjs",
     "test:browser": "node test/browser.cjs",
     "dist:linux": "electron-builder --linux AppImage deb --x64 --publish never",
@@ -30,16 +30,18 @@
     "test:onboarding": "node test/onboarding.cjs",
     "test:settings-library": "node test/settings-library.cjs",
     "test:live-certificate": "node test/live-certificate.cjs",
-    "test:claude-update": "node test/claude-update.cjs"
+    "test:claude-update": "node test/claude-update.cjs",
+    "test:files-check": "node test/files-check.cjs",
+    "test:speed-check": "node test/speed-check.cjs"
   },
   "dependencies": {
     "electron-updater": "6.8.11",
     "yauzl": "3.4.0"
   },
   "devDependencies": {
-    "electron": "45.2.2",
+    "electron": "45.2.3",
     "electron-builder": "26.18.0",
-    "playwright": "1.63.0"
+    "playwright": "1.65.0"
   },
   "build": {
     "appId": "net.solutionmax.migratiebrowser",

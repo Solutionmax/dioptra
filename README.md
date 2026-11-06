@@ -17,7 +17,7 @@ A browser for website migrations: open any site on its new server before DNS cha
   <a href="docs/technical-notes.md">Technical notes</a>
 </p>
 
-Screenshots show Dioptra **1.1.0** with a local demonstration website.
+Screenshots show Dioptra **1.2.0** with a local demonstration website.
 
 ![Dioptra comparing the new server (Hostfile) with the live site side by side](docs/screenshots/compare.png)
 
@@ -33,22 +33,23 @@ Moving a website to a new server usually means editing `/etc/hosts`, flushing DN
 - **See what the site runs on.** WordPress, WooCommerce, Drupal, Laravel and more, with the PHP version when the server reports it. In Compare a different PHP version on the old and new server is marked.
 - **Compare.** The new server and the live site side by side, each with its own cookies. Or put another URL on the right, such as the copy of a site on a temporary test domain. Drag the bar between the panes to give one side more room.
 - **Differences.** Dioptra fetches the page from both servers and shows what changed in the HTML, the headers and the external domains the page loads. Injected scripts and other signs of a hacked site stand out immediately.
+- **Files, Speed and Checks.** See which files failed to load only on the new server, or still come from the old one. Measure both servers at the same moment, with Google's thresholds and a filmstrip, and get the reason when the new one is slower. Checks catch a site that tells search engines not to index it, old addresses left in the page and standard addresses that answer differently. A site that only exists on the new server is judged on its own.
 - **Claude built in.** Install the official Claude in Chrome extension and let Claude read, click and screenshot your tabs, including both sides of a comparison.
 - **Made for testing servers.** Certificate errors on a new server can be skipped, and a Live page with a bad certificate can be opened with **Continue anyway** for that one certificate. Claude and sign-in services always keep strict certificate checks.
 
 ## Download
 
-Current release: [Dioptra v1.1.0](https://github.com/Solutionmax/dioptra/releases/tag/v1.1.0).
+Current release: [Dioptra v1.2.0](https://github.com/Solutionmax/dioptra/releases/tag/v1.2.0).
 
 | Platform | Download |
 | --- | --- |
-| macOS, Apple Silicon (M1 and later) | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.1.0/Dioptra-1.1.0-mac-arm64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.1.0/Dioptra-1.1.0-mac-arm64.zip) |
-| macOS, Intel | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.1.0/Dioptra-1.1.0-mac-x64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.1.0/Dioptra-1.1.0-mac-x64.zip) |
-| Windows 11 and 10, 64 bit | [Installer](https://github.com/Solutionmax/dioptra/releases/download/v1.1.0/Dioptra-1.1.0-win-x64.exe) |
-| Linux x86-64 | [AppImage](https://github.com/Solutionmax/dioptra/releases/download/v1.1.0/Dioptra-1.1.0-linux-x86_64.AppImage) |
-| Ubuntu / Debian, amd64 | [.deb package](https://github.com/Solutionmax/dioptra/releases/download/v1.1.0/Dioptra-1.1.0-ubuntu-amd64.deb) |
+| macOS, Apple Silicon (M1 and later) | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.2.0/Dioptra-1.2.0-mac-arm64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.2.0/Dioptra-1.2.0-mac-arm64.zip) |
+| macOS, Intel | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.2.0/Dioptra-1.2.0-mac-x64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.2.0/Dioptra-1.2.0-mac-x64.zip) |
+| Windows 11 and 10, 64 bit | [Installer](https://github.com/Solutionmax/dioptra/releases/download/v1.2.0/Dioptra-1.2.0-win-x64.exe) |
+| Linux x86-64 | [AppImage](https://github.com/Solutionmax/dioptra/releases/download/v1.2.0/Dioptra-1.2.0-linux-x86_64.AppImage) |
+| Ubuntu / Debian, amd64 | [.deb package](https://github.com/Solutionmax/dioptra/releases/download/v1.2.0/Dioptra-1.2.0-ubuntu-amd64.deb) |
 
-[SHA-256 checksums](https://github.com/Solutionmax/dioptra/releases/download/v1.1.0/SHA256SUMS.txt) · [Verification and platform coverage](docs/verification.md) · [All releases](https://github.com/Solutionmax/dioptra/releases)
+[SHA-256 checksums](https://github.com/Solutionmax/dioptra/releases/download/v1.2.0/SHA256SUMS.txt) · [Verification and platform coverage](docs/verification.md) · [All releases](https://github.com/Solutionmax/dioptra/releases)
 
 ## Install
 
@@ -86,7 +87,7 @@ Run it as a normal user. If FUSE is not available, add `--appimage-extract-and-r
 Download the `.deb` from the release, then install it with:
 
 ```sh
-sudo apt install ./Dioptra-1.1.0-ubuntu-amd64.deb
+sudo apt install ./Dioptra-1.2.0-ubuntu-amd64.deb
 ```
 
 Open **Dioptra** from your applications menu as your normal user. The package manager handles dependencies.
@@ -139,6 +140,9 @@ The **DNS** button in either pane puts the DNS records side by side: what the ne
 Click **Differences**. Dioptra downloads the page from both servers and compares:
 
 - **External domains:** which hosts the page loads scripts, stylesheets, images and frames from, and which ones appear on only one side.
+- **Files:** files that failed to load in each pane (errors, refused stylesheets, CORS, mixed content, JavaScript errors), and files still loaded from the old server.
+- **Speed:** three loads per server with the cache off, measured at the same moment from your computer: first byte, first paint, largest paint, fully loaded, requests and size against Google's thresholds, a timeline and a filmstrip. When the new server is slower it says why (page cache, compression, first byte) and how to fix it.
+- **Checks:** noindex in meta robots, X-Robots-Tag, robots.txt or canonical; old addresses left in the page (old server IP, temporary `/~user/` URL, staging copies, `http://` links) with `wp search-replace` dry run commands; and standard addresses such as robots.txt, the sitemap, xmlrpc.php, wp-login.php, http to https, www and a page that must give 404.
 - **HTML:** the changed lines, with a little context.
 - **Headers:** server software, PHP version, caching and security headers that differ.
 - **Findings:** a plain-language summary, with serious items in red, such as a script that loads only on the live site or inline code that looks obfuscated.
@@ -146,6 +150,8 @@ Click **Differences**. Dioptra downloads the page from both servers and compares
 Compare shows you whether both sides *look* the same. Differences shows what the servers actually *send*. It can highlight unexpected scripts or injected markup worth investigating.
 
 Differences makes fresh anonymous document requests on both sides using Node's certificate trust store. A private CA trusted only by Chromium or the operating system may therefore work in a browser pane but fail in Differences. Hostfile applies the matching domain rule's Skip SSL choice; Live uses normal DNS and verifies certificates, except the one certificate you accepted with Continue anyway on that domain. Neither side sends your saved cookies. Each reported IP belongs to the final document after redirects.
+
+When Live cannot be reached (no DNS record yet, connection refused, no answer), Differences says why, and Speed and Checks judge the new server on its own. **Measure Live too** and **Check Live too** try Live again.
 
 ![Differences view listing a script that loads only on the live site](docs/screenshots/differences.png)
 
