@@ -3,7 +3,8 @@ const { detectSite } = require('./site-detect.cjs');
 const { createLibrary } = require('./library.cjs');
 const { randomUUID, X509Certificate } = require('node:crypto');
 const { shareClaudeSession } = require('./claude-session.cjs');
-const { app, BaseWindow, BrowserWindow, WebContentsView, ipcMain, session, dialog, Menu, clipboard, shell } = require('electron');
+const { app, BaseWindow, BrowserWindow, WebContentsView, ipcMain, session, dialog, Menu, clipboard, ClipboardItem, shell } = require('electron');
+const { probe: shotProbe, capturePanes, fileName: shotFileName, savePng, copyPng, Cancelled } = require('./screenshot.cjs');
 const path = require('node:path');
 const dns = require('node:dns').promises;
 const fs = require('node:fs/promises');
@@ -174,6 +175,7 @@ function dnsTarget(tab) {
   return { host, ruleIP: rule && (paired || tab.mode === 'hostfile') ? rule.ip : '', compare: Boolean(rule && paired) };
 }
 function cardData(kind, id) {
+  if (kind === 'shot') return {};
   if (kind === 'memory') return memoryData();
   if (['cache-menu','tools','about'].includes(kind)) return { version: app.getVersion(), dock: config.devtoolsDock, open: Boolean(current()?.toolsOpen) };
   const tab = tabs.get(id); if (!tab) return null;
@@ -184,7 +186,7 @@ function cardData(kind, id) {
   const cert = kind === 'cert' && !tab.loading && !tab.error && observed?.verified ? observed : null;
   return cert ? { ...cert, daysLeft: daysLeft(cert.expires) } : null;
 }
-const CARD_WIDTH = { cert: 330, dns: 440, site: 840, 'cache-menu': 400, cache: 380, tools: 310, about: 330, memory: 390 }, DNS_TABLE_WIDTH = 780;
+const CARD_WIDTH = { shot: 340, cert: 330, dns: 440, site: 840, 'cache-menu': 400, cache: 380, tools: 310, about: 330, memory: 390 }, DNS_TABLE_WIDTH = 780;
 // Returns true when the card had to be cut off at the bottom of the window (the content exceeds the available window).
 function placeCard(height) {
   if (!win || win.isDestroyed()) return false;
@@ -214,9 +216,107 @@ async function showDns(mine) {
     await draw({ state: 'done', ...report });
   } catch (error) { if (current()) throw error; }
 }
+// Camera button: the visible area or the full page, of the active tab or of the Compare panes (one image with a label per
+// pane). The choice is kept while Dioptra runs. The last picture stays until the card closes, so Copy after Download
+// (or the other way round) needs no second capture.
+const shotChoice = { area: 'visible', panes: 'both' };
+const plainIP = ip => String(ip || '').replace(/^\[|\]$/g, '').replace(/^::ffff:/i, '');
+function shotTarget() {
+  if (viewMode === 'differences') return { off: 'Switch to Single or Compare to take a screenshot.' };
+  const pair = visibleComparison(), list = (pair ? [pair.host, pair.live] : [activeId]).map(id => tabs.get(id));
+  if (!list.length || list.some(t => !t || t.startPage || t.error || t.mode === 'auth' || !/^https?:/.test(t.url))) return { off: 'Open a website first, then take a screenshot.' };
+  return { compare: Boolean(pair), tabs: list };
+}
+function shotPane(tab) {
+  const r = route(tab), hostfile = r.label === 'HOSTFILE';
+  return { wc: tab.view.webContents, live: !hostfile, name: hostfile ? 'New server' : 'Live', ip: plainIP(tab.connection?.ip) || (hostfile ? r.configured : ''),
+    via: hostfile ? 'via Hostfile rule' : 'public DNS', ptr: String(tab.connection?.hostname || '').slice(0, 120) };
+}
+const chosenSides = (list, compare) => compare && shotChoice.panes !== 'both' ? [list[shotChoice.panes === 'hostfile' ? 0 : 1]] : list;
+async function probeShot(mine) {
+  const s = mine.shot, target = shotTarget();
+  if (target.off) { Object.assign(s, { state: 'off', message: target.off }); return; }
+  const sides = await Promise.all(target.tabs.map(async tab => { const pane = shotPane(tab); return { ip: pane.ip, probe: await shotProbe(pane.wc).catch(() => null) }; }));
+  Object.assign(s, { state: 'choose', compare: target.compare, sides, result: null, message: '' });
+}
+function shotNotes(s) {
+  const sides = chosenSides(s.sides, s.compare).map(x => x.probe).filter(Boolean), n = s.compare && shotChoice.panes === 'both' ? '2 panes, ' : '', fmt = v => Math.round(v).toLocaleString('en-GB');
+  if (!sides.length) return { visible: 'What you see now', full: 'Top to bottom' };
+  const width = sides.reduce((sum, p) => sum + p.width, 0), tall = Math.max(...sides.map(p => p.height)), full = Math.max(...sides.map(p => p.full));
+  return { visible: `What you see now, ${n}${fmt(width)} × ${fmt(tall)}`, full: `Top to bottom, ${n}${n ? 'up to ' : `${fmt(width)} × `}${fmt(full)} px${n ? ' tall' : ''}` };
+}
+function shotView(mine) {
+  const s = mine.shot, base = { kind: 'shot', state: s.state, area: shotChoice.area, panes: shotChoice.panes, compare: Boolean(s.compare), message: s.message || '' };
+  if (s.state === 'busy') return { ...base, progress: s.progress };
+  if (s.state === 'done' || s.state === 'error') { const r = s.result; return { ...base, result: r && { name: r.name, size: r.size, saved: r.saved, copied: r.copied, cut: r.cut } }; }
+  if (s.state === 'off') return base;
+  const lazy = Math.max(0, ...chosenSides(s.sides, s.compare).map(x => x.probe?.lazy || 0));
+  return { ...base, notes: shotNotes(s), lazy, ips: s.compare ? { hostfile: s.sides[0].ip, live: s.sides[1].ip } : {} };
+}
+// Draws in order: progress updates come fast and must not overtake each other.
+function drawShot(mine) {
+  mine.drawing = (mine.drawing || Promise.resolve()).then(async () => {
+    if (card !== mine) return;
+    const height = await mine.view.webContents.executeJavaScript(`render(${JSON.stringify(shotView(mine))})`).then(Math.ceil);
+    if (card === mine && placeCard(height)) await mine.view.webContents.executeJavaScript("document.documentElement.classList.add('tall')");
+  }).catch(error => console.error('Screenshot card:', error.message));
+  return mine.drawing;
+}
+// Every capture has its own run number: Cancel, Try again or a closed card end the old run, so its scroll loop cannot
+// keep moving a page under a new one. Host and address are taken before the capture, so they match the pixels.
+async function shotPicture(mine) {
+  const s = mine.shot, run = s.run = (s.run || 0) + 1, target = shotTarget(), alive = () => card === mine && s.run === run && win && !win.isDestroyed();
+  if (target.off) throw new Error(target.off);
+  const list = chosenSides(target.tabs, target.compare), panes = list.map(shotPane), when = new Date(), host = route(list[0]).host, url = list[0].url;
+  const shots = await capturePanes(panes, { full: shotChoice.area === 'full', alive, progress: p => { if (alive()) { s.progress = p; drawShot(mine); } } });
+  if (!alive()) throw new Cancelled();
+  const spec = { host, url, version: app.getVersion(), panes: shots,
+    when: when.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) };
+  const image = await win.webContents.executeJavaScript(`window.composeShot(${JSON.stringify(spec)})`);
+  const png = Buffer.from(String(image?.png || ''), 'base64');
+  if (png.length < 8 || png.readUInt32BE(0) !== 0x89504e47) throw new Error('The picture could not be made.');
+  const what = list.length > 1 ? 'compare' : panes[0].live ? 'live' : 'new server';
+  return { png, name: shotFileName(host, what, when), cut: shots.some(p => p.cut), saved: false, copied: false,
+    size: `${image.width.toLocaleString('en-GB')} × ${image.height.toLocaleString('en-GB')} px${list.length > 1 ? ' · New server and Live in one image' : ''}` };
+}
+async function shotDeliver(mine, action) {
+  const s = mine.shot;
+  if (s.delivering || (action === 'download' && s.result?.saved) || (action === 'copy' && s.result?.copied)) return;
+  s.delivering = true;
+  try {
+    if (!s.result) {
+      s.state = 'busy'; s.progress = { title: 'Capturing…', pct: 5, steps: [] }; drawShot(mine);
+      s.result = await shotPicture(mine);
+    }
+    if (card !== mine) return;
+    if (action === 'download') {
+      const file = savePng(app.getPath('downloads'), s.result.name, s.result.png);
+      Object.assign(s.result, { file, name: path.basename(file), saved: true });
+      library.download({ id: randomUUID(), name: s.result.name, url: '', path: file, state: 'completed', received: s.result.png.length, total: s.result.png.length, createdAt: Date.now() });
+      emit();
+    } else {
+      await copyPng(clipboard, ClipboardItem, s.result.png);
+      s.result.copied = true;
+    }
+    s.state = 'done';
+  } catch (error) {
+    if (error.cancelled) { s.state = 'choose'; s.result = null; }
+    else { console.error('Screenshot:', error.message); s.state = 'error'; s.message = error.message; }
+  } finally { s.delivering = false; }
+  return drawShot(mine);
+}
+async function shotAction(mine, action) {
+  const s = mine.shot;
+  if (s.state === 'choose' && ['visible', 'full'].includes(action)) { shotChoice.area = action; return drawShot(mine); }
+  if (s.state === 'choose' && s.compare && ['both', 'hostfile', 'live'].includes(action)) { shotChoice.panes = action; return drawShot(mine); }
+  if (s.state === 'busy' && action === 'cancel') { s.run++; return; }
+  if (action === 'folder' && s.result?.file) { shell.showItemInFolder(s.result.file); return; }
+  if (action === 'again' && s.state !== 'busy') { await probeShot(mine); return drawShot(mine); }
+  if (['choose', 'done'].includes(s.state) && ['download', 'copy'].includes(action)) return shotDeliver(mine, action);
+}
 async function openCard(kind, id, anchor) {
   if (card) { const same = card.kind === kind && card.id === id; closeCard(); if (same) return; }
-  if (!['cert', 'site', 'memory', 'dns', 'cache', 'cache-menu', 'tools', 'about'].includes(kind)) return;
+  if (!['cert', 'site', 'memory', 'dns', 'cache', 'cache-menu', 'tools', 'about', 'shot'].includes(kind)) return;
   const data = cardData(kind, id); if (!data) return;
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
   const wc = view.webContents, mine = card = { view, kind, id, anchor };
@@ -224,9 +324,10 @@ async function openCard(kind, id, anchor) {
   // The card has no bridge to the app. Its actions are links to a reserved, never loaded address that is handled here.
   wc.on('will-navigate', (event, url) => {
     event.preventDefault();
-    const [, action, target] = url.match(/^https:\/\/card\.invalid\/(activate|reload|refresh|hard-reload|clear-cache|clear-site-data|devtools|dock-bottom|dock-left|dock-right|site|cert|maker-website|maker-github|maker-coffee)\/(\d+)$/) || [];
+    const [, action, target] = url.match(/^https:\/\/card\.invalid\/(activate|reload|refresh|hard-reload|clear-cache|clear-site-data|devtools|dock-bottom|dock-left|dock-right|site|cert|maker-website|maker-github|maker-coffee|shot-(?:visible|full|both|hostfile|live|download|copy|cancel|folder|again))\/(\d+)$/) || [];
     if (action === 'refresh') { if (card === mine && kind === 'dns') showDns(mine).catch(error => console.error('DNS card:', error.message)); return; }
     if (card !== mine || !action) return;
+    if (action.startsWith('shot-') && kind === 'shot') { shotAction(mine, action.slice(5)); return; }
     const tab = tabs.get(Number(target)) || (target === '0' ? current() : null);
     if (['site','cert'].includes(action) && kind==='site') { closeCard(); openCard(action, Number(target), anchor); return; }
     if (['maker-website','maker-github','maker-coffee'].includes(action) && kind==='about') { closeCard(); newTab({'maker-website':'https://solutionmax.net/','maker-github':'https://github.com/Solutionmax/dioptra','maker-coffee':'https://buymeacoffee.com/solutionmax'}[action]); return; }
@@ -244,6 +345,7 @@ async function openCard(kind, id, anchor) {
   // Width first, so the text wraps as it will be shown; then the height the content needs.
   view.setBorderRadius(10); placeCard(1); win.contentView.addChildView(view);
   if (kind === 'dns') { mine.dns = data; return showDns(mine); }
+  if (kind === 'shot') { mine.shot = { state: 'choose' }; await probeShot(mine); return drawShot(mine); }
   const height = await renderCard(data);
   if (card === mine && placeCard(height)) await wc.executeJavaScript("document.documentElement.classList.add('tall')");
 }

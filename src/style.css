@@ -433,3 +433,41 @@ footer{background:#f7faff;gap:18px}footer button{font-size:13px}.footer-spacer{f
 .nl-chip{display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:5px;background:#eef2f7;color:var(--ink2);font-size:11.5px;font-weight:600;margin-right:6px}
 .kpi.muted .n{color:var(--ink3)}
 .finding.calm{border-color:#cfdcef;background:var(--tint)}.finding.calm .t svg{color:var(--blue-ink)}.finding.calm .t b{color:var(--ink)}.nl-nw{white-space:nowrap}
+/* Screenshot card (camera button in the toolbar) */
+.card-pop .shot-head{display:flex;align-items:center;gap:8px;margin-bottom:12px}.card-pop .shot-head strong{font-size:15px}.card-pop .shot-head svg{color:var(--blue-ink)}
+.card-pop .shot-label{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin:0 0 6px}
+.card-pop .shot-opts{display:grid;gap:6px;margin-bottom:12px}
+.card-pop .shot-opt{display:flex;align-items:center;gap:11px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;color:var(--ink);text-decoration:none;background:var(--card)}
+.card-pop .shot-opt:hover{background:var(--tint)}.card-pop .shot-opt svg{width:20px;height:20px;color:var(--ink2)}
+.card-pop .shot-opt b{display:block;font-size:13.5px}.card-pop .shot-opt small{display:block;color:var(--ink3);font-size:12px;margin-top:1px}
+.card-pop .shot-opt.on{border-color:var(--blue);background:var(--blue-soft);box-shadow:0 0 0 1px var(--blue) inset}.card-pop .shot-opt.on svg{color:var(--blue-ink)}
+.card-pop .shot-opt .dot{margin-left:auto;width:14px;height:14px;border-radius:50%;border:1.5px solid var(--line);flex:none;box-sizing:border-box}.card-pop .shot-opt.on .dot{border:4px solid var(--blue-ink)}
+.card-pop .shot-seg{display:grid;grid-template-columns:1.35fr 1fr 1fr;border:1px solid var(--line);border-radius:9px;overflow:hidden;margin-bottom:8px}
+.card-pop .shot-seg a{padding:7px 6px;font-size:12px;font-weight:600;text-align:center;color:var(--ink);text-decoration:none;background:var(--card)}.card-pop .shot-seg a+a{border-left:1px solid var(--line)}
+.card-pop .shot-seg a:hover{background:var(--tint)}.card-pop .shot-seg a.on{background:var(--blue-soft);color:var(--blue-ink)}
+.card-pop .shot-mini{display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:6px;border-radius:9px;background:var(--tint);margin-bottom:12px}.card-pop .shot-mini.single{grid-template-columns:1fr}
+.card-pop .shot-mini div{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 7px 8px;font-family:var(--mono);font-size:11px;font-weight:600;line-height:1.5;overflow-wrap:anywhere}
+.card-pop .shot-mini div::after{content:'';display:block;height:26px;margin-top:6px;border-radius:3px;background:repeating-linear-gradient(var(--tint) 0 5px,transparent 5px 9px)}
+.card-pop .shot-mini b{display:table;font-size:9px;letter-spacing:.08em;padding:1px 5px;border-radius:4px;margin-bottom:3px}
+.card-pop .shot-mini .hostfile b{background:var(--blue-soft);color:var(--blue-ink)}.card-pop .shot-mini .live b{background:var(--green-soft);color:var(--green-ink)}
+.card-pop .shot-mini span{display:block}.card-pop .shot-mini i{display:block;font-style:normal;font-weight:500;font-size:10px;color:var(--ink3)}
+.card-pop .shot-lazy{display:flex;gap:8px;align-items:flex-start;margin:0 0 12px;padding:8px 10px;border-radius:9px;background:var(--amber-soft);color:var(--amber-ink);font-size:12.5px;line-height:1.45}
+.card-pop .shot-lazy svg,.card-pop .shot-done svg{width:15px;height:15px;margin-top:2px}
+.card-pop .shot-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.card-pop .shot-actions.one{grid-template-columns:1fr}
+.card-pop .shot-actions .mem-btn{display:flex;align-items:center;justify-content:center;gap:7px;padding:9px 10px;font-size:13px;white-space:normal;text-align:center}
+.card-pop .shot-actions .mem-btn svg{width:15px;height:15px}.card-pop .shot-actions .mem-btn.primary{background:var(--blue-ink);border-color:var(--blue-ink);color:#fff}
+.card-pop .shot-foot{margin:9px 0 0;color:var(--ink3);font-size:12px}
+.card-pop .shot-note{margin:0 0 10px;color:var(--amber-ink);font-size:12px}
+.card-pop .shot-progress b{display:block;font-size:13px;margin-bottom:2px}.card-pop .shot-progress small{display:block;color:var(--ink3);font-size:12px;margin-bottom:10px}
+.card-pop .shot-bar{height:6px;border-radius:3px;background:var(--tint);overflow:hidden;margin-bottom:6px}.card-pop .shot-bar i{display:block;height:100%;background:var(--blue);transition:width .25s}
+.card-pop .shot-steps{list-style:none;margin:10px 0 12px;padding:0;display:grid;gap:5px;font-size:12px;color:var(--ink2)}.card-pop .shot-steps li{display:flex;gap:7px;align-items:center}
+.card-pop .shot-steps svg{width:14px;height:14px}.card-pop .shot-steps .ok{color:var(--green-ink)}.card-pop .shot-steps .now{color:var(--blue-ink);font-weight:600}.card-pop .shot-steps .todo{color:var(--ink3)}
+.card-pop .shot-steps .spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--blue-soft);border-top-color:var(--blue-ink);margin:0 1px;animation:shot-spin .8s linear infinite;box-sizing:border-box}
+.card-pop .shot-steps .wait{width:12px;height:12px;border-radius:50%;border:2px solid var(--line);margin:0 1px;box-sizing:border-box}
+@keyframes shot-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.card-pop .shot-steps .spin{animation:none}.card-pop .shot-bar i{transition:none}}
+.card-pop .shot-done{display:flex;gap:10px;align-items:flex-start;padding:10px 11px;border-radius:9px;background:var(--green-soft);color:var(--green-ink);margin-bottom:10px}
+.card-pop .shot-done b{display:block;font-size:13px}.card-pop .shot-done code{display:block;font-family:var(--mono);font-size:11px;color:var(--ink);margin-top:3px;overflow-wrap:anywhere}
+.card-pop .shot-done small{display:block;color:var(--ink2);font-size:12px;margin-top:3px}
+.card-pop .shot-done.copy{background:var(--blue-soft);color:var(--blue-ink)}.card-pop .shot-done.error{background:var(--red-soft);color:var(--red-ink)}
+.card-pop .shot-opt:focus-visible,.card-pop .shot-seg a:focus-visible{outline:2px solid var(--blue);outline-offset:2px}

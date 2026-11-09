@@ -17,7 +17,7 @@ A browser for website migrations: open any site on its new server before DNS cha
   <a href="docs/technical-notes.md">Technical notes</a>
 </p>
 
-Screenshots show Dioptra **1.2.0** with a local demonstration website.
+Screenshots show Dioptra **1.3.0** with a local demonstration website.
 
 ![Dioptra comparing the new server (Hostfile) with the live site side by side](docs/screenshots/compare.png)
 
@@ -32,6 +32,7 @@ Moving a website to a new server usually means editing `/etc/hosts`, flushing DN
 - **DNS records at a click.** The A, AAAA, CNAME, MX, TXT and NS records of the domain. In Compare the zone on the new server sits next to public DNS, so a mail or TXT record that did not come along shows up before you switch.
 - **See what the site runs on.** WordPress, WooCommerce, Drupal, Laravel and more, with the PHP version when the server reports it. In Compare a different PHP version on the old and new server is marked.
 - **Compare.** The new server and the live site side by side, each with its own cookies. Or put another URL on the right, such as the copy of a site on a temporary test domain. Drag the bar between the panes to give one side more room.
+- **Screenshots.** The camera button saves the visible area or the full page as a PNG, or copies it to paste straight away. Pages that load images only as you scroll are scrolled first, so nothing is missing. In Compare both panes become one image, each labelled with its server and IP.
 - **Differences.** Dioptra fetches the page from both servers and shows what changed in the HTML, the headers and the external domains the page loads. Injected scripts and other signs of a hacked site stand out immediately.
 - **Files, Speed and Checks.** See which files failed to load only on the new server, or still come from the old one. Measure both servers at the same moment, with Google's thresholds and a filmstrip, and get the reason when the new one is slower. Checks catch a site that tells search engines not to index it, old addresses left in the page and standard addresses that answer differently. A site that only exists on the new server is judged on its own.
 - **Claude built in.** Install the official Claude in Chrome extension and let Claude read, click and screenshot your tabs, including both sides of a comparison.
@@ -39,17 +40,17 @@ Moving a website to a new server usually means editing `/etc/hosts`, flushing DN
 
 ## Download
 
-Current release: [Dioptra v1.2.0](https://github.com/Solutionmax/dioptra/releases/tag/v1.2.0).
+Current release: [Dioptra v1.3.0](https://github.com/Solutionmax/dioptra/releases/tag/v1.3.0).
 
 | Platform | Download |
 | --- | --- |
-| macOS, Apple Silicon (M1 and later) | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.2.0/Dioptra-1.2.0-mac-arm64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.2.0/Dioptra-1.2.0-mac-arm64.zip) |
-| macOS, Intel | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.2.0/Dioptra-1.2.0-mac-x64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.2.0/Dioptra-1.2.0-mac-x64.zip) |
-| Windows 11 and 10, 64 bit | [Installer](https://github.com/Solutionmax/dioptra/releases/download/v1.2.0/Dioptra-1.2.0-win-x64.exe) |
-| Linux x86-64 | [AppImage](https://github.com/Solutionmax/dioptra/releases/download/v1.2.0/Dioptra-1.2.0-linux-x86_64.AppImage) |
-| Ubuntu / Debian, amd64 | [.deb package](https://github.com/Solutionmax/dioptra/releases/download/v1.2.0/Dioptra-1.2.0-ubuntu-amd64.deb) |
+| macOS, Apple Silicon (M1 and later) | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.3.0/Dioptra-1.3.0-mac-arm64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.3.0/Dioptra-1.3.0-mac-arm64.zip) |
+| macOS, Intel | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.3.0/Dioptra-1.3.0-mac-x64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.3.0/Dioptra-1.3.0-mac-x64.zip) |
+| Windows 11 and 10, 64 bit | [Installer](https://github.com/Solutionmax/dioptra/releases/download/v1.3.0/Dioptra-1.3.0-win-x64.exe) |
+| Linux x86-64 | [AppImage](https://github.com/Solutionmax/dioptra/releases/download/v1.3.0/Dioptra-1.3.0-linux-x86_64.AppImage) |
+| Ubuntu / Debian, amd64 | [.deb package](https://github.com/Solutionmax/dioptra/releases/download/v1.3.0/Dioptra-1.3.0-ubuntu-amd64.deb) |
 
-[SHA-256 checksums](https://github.com/Solutionmax/dioptra/releases/download/v1.2.0/SHA256SUMS.txt) · [Verification and platform coverage](docs/verification.md) · [All releases](https://github.com/Solutionmax/dioptra/releases)
+[SHA-256 checksums](https://github.com/Solutionmax/dioptra/releases/download/v1.3.0/SHA256SUMS.txt) · [Verification and platform coverage](docs/verification.md) · [All releases](https://github.com/Solutionmax/dioptra/releases)
 
 ## Install
 
@@ -87,7 +88,7 @@ Run it as a normal user. If FUSE is not available, add `--appimage-extract-and-r
 Download the `.deb` from the release, then install it with:
 
 ```sh
-sudo apt install ./Dioptra-1.2.0-ubuntu-amd64.deb
+sudo apt install ./Dioptra-1.3.0-ubuntu-amd64.deb
 ```
 
 Open **Dioptra** from your applications menu as your normal user. The package manager handles dependencies.
@@ -134,6 +135,8 @@ Drag the bar between the two panes to make one side larger, for example to see t
 The **DNS** button in either pane puts the DNS records side by side: what the new server answers when Dioptra asks it directly, and what public DNS says. Values that exist on one side only are marked, so a mail or verification record that is missing on the new server stands out. The address record is expected to differ during a migration and is labelled that way. This works when the new server runs its own DNS, as cPanel, DirectAdmin and Plesk servers do. When it does not, the card says so and shows public DNS.
 
 ![DNS records of the new server next to public DNS](docs/screenshots/dns-compare.png)
+
+**Screenshots.** The camera button before Claude in the toolbar takes a picture of what you are looking at. Choose **Visible area** or **Full page** (top to bottom), then **Download** for a PNG in your Downloads folder or **Copy** to paste it straight into a ticket or chat. When a page loads images only as you scroll, Full page scrolls it to the bottom first and puts it back where you were. In Compare the picture holds both panes in one image: the new server on the left and Live on the right, each with a label bar that shows its IP, how it was reached and its reverse DNS name. You can also choose one pane.
 
 ### 4. See the differences
 

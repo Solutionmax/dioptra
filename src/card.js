@@ -59,7 +59,85 @@ function dnsTable(d) {
   table.append(cols, top, body);
   return table;
 }
+// --- camera button: choose the area (and the panes in Compare), then Download or Copy. Links are shot actions for the main process.
+const SHOT_ICONS = {
+  camera: ['M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z', 'circle 12 13 3'],
+  visible: ['M3 7V5a2 2 0 0 1 2-2h2', 'M17 3h2a2 2 0 0 1 2 2v2', 'M21 17v2a2 2 0 0 1-2 2h-2', 'M7 21H5a2 2 0 0 1-2-2v-2', 'M8 7h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z'],
+  full: ['M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z', 'M12 7v8', 'm9 12 3 3 3-3'],
+  download: ['M12 15V3', 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4', 'm7 10 5 5 5-5'],
+  copy: ['M10 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z', 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'],
+  image: ['M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z', 'circle 9 9 2', 'm21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21'],
+  check: ['M20 6 9 17l-5-5'],
+  folder: ['M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'],
+  alert: ['circle 12 12 9', 'M12 8v5', 'M12 16h.01']
+};
+function shotIcon(name) {
+  const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
+  for (const d of SHOT_ICONS[name]) {
+    const [kind, cx, cy, r] = d.split(' '), shape = document.createElementNS(ns, kind === 'circle' ? 'circle' : 'path');
+    if (kind === 'circle') { shape.setAttribute('cx', cx); shape.setAttribute('cy', cy); shape.setAttribute('r', r); } else shape.setAttribute('d', d);
+    svg.append(shape);
+  }
+  return svg;
+}
+function shotLink(action, className, icon, label, pressed) {
+  const a = el('a', className); a.href = `https://card.invalid/shot-${action}/0`;
+  if (pressed !== undefined) { a.setAttribute('role', 'radio'); a.setAttribute('aria-checked', String(pressed)); if (pressed) a.classList.add('on'); }
+  if (icon) a.append(shotIcon(icon));
+  a.append(...(Array.isArray(label) ? label : [label]));
+  return a;
+}
+function shotOption(action, icon, title, note, on) {
+  const text = el('span'); text.append(el('b', '', title), el('small', '', note));
+  return shotLink(action, 'shot-opt', icon, [text, el('span', 'dot')], on);
+}
+function shotResult(d) {
+  const out = [], r = d.result || {}, box = (className, icon, ...lines) => { const b = el('div', `shot-done${className}`), text = el('span'); text.append(...lines); b.append(shotIcon(icon), text); return b; };
+  if (d.state === 'error') out.push(box(' error', 'alert', el('b', '', 'No screenshot'), el('small', '', d.message)));
+  if (r.saved) out.push(box('', 'check', el('b', '', 'Saved to Downloads'), el('code', '', r.name), el('small', '', r.size)));
+  if (r.copied) out.push(box(' copy', 'copy', el('b', '', 'Copied to the clipboard'), el('small', '', `${r.saved ? '' : `${r.size}. `}Paste it with ⌘V or Ctrl+V.`)));
+  if (r.cut) out.push(el('p', 'shot-note', 'The page is longer than one image can hold, so the picture stops there.'));
+  const actions = el('div', 'shot-actions');
+  if (r.saved) actions.append(shotLink('folder', 'mem-btn', 'folder', 'Show in folder'));
+  if (d.state === 'done' && !r.copied) actions.append(shotLink('copy', 'mem-btn', 'copy', 'Copy'));
+  if (d.state === 'done' && !r.saved) actions.append(shotLink('download', 'mem-btn', 'download', 'Download'));
+  actions.append(shotLink('again', 'mem-btn', 'camera', d.state === 'error' ? 'Try again' : 'New screenshot'));
+  return [...out, actions];
+}
+function shotProgress(d) {
+  const box = el('div', 'shot-progress'), bar = el('div', 'shot-bar'), fill = el('i'), list = el('ul', 'shot-steps');
+  fill.style.width = `${Math.max(3, Math.min(100, Number(d.progress.pct) || 0))}%`; bar.append(fill);
+  for (const [status, text] of d.progress.steps) { const li = el('li', status); li.append(status === 'ok' ? shotIcon('check') : el('span', status === 'now' ? 'spin' : 'wait'), el('span', '', text)); list.append(li); }
+  box.append(el('b', '', d.progress.title), el('small', '', d.compare && d.panes === 'both' ? 'Both pages at the same time. They go back to where you were.' : 'The page goes back to where you were.'), bar, list);
+  const actions = el('div', 'shot-actions one'); actions.append(shotLink('cancel', 'mem-btn', '', 'Cancel'));
+  return [box, actions];
+}
+function shotChoose(d) {
+  const out = [el('div', 'shot-label', 'Area')], area = el('div', 'shot-opts'); area.setAttribute('role', 'radiogroup'); area.setAttribute('aria-label', 'Area');
+  area.append(shotOption('visible', 'visible', 'Visible area', d.notes.visible, d.area === 'visible'), shotOption('full', 'full', 'Full page', d.notes.full, d.area === 'full'));
+  out.push(area);
+  if (d.compare) {
+    const seg = el('div', 'shot-seg'), mini = el('div', `shot-mini${d.panes === 'both' ? '' : ' single'}`); seg.setAttribute('role', 'radiogroup'); seg.setAttribute('aria-label', 'Panes');
+    seg.append(shotLink('both', '', '', 'Both, one image', d.panes === 'both'), shotLink('hostfile', '', '', 'New server', d.panes === 'hostfile'), shotLink('live', '', '', 'Live', d.panes === 'live'));
+    for (const [side, badge, via] of [['hostfile', 'NEW SERVER', 'via Hostfile'], ['live', 'LIVE', 'public DNS']]) {
+      if (d.panes !== 'both' && d.panes !== side) continue;
+      const b = el('div', side); b.append(el('b', '', badge), el('span', '', d.ips[side] || 'IP not measured'), el('i', '', via)); mini.append(b);
+    }
+    out.push(el('div', 'shot-label', 'Panes'), seg, mini);
+  }
+  if (d.area === 'full' && d.lazy) { const note = el('p', 'shot-lazy'); note.append(shotIcon('image'), el('span', '', `This page loads ${d.lazy} image${d.lazy === 1 ? '' : 's'} only when you scroll. Full page scrolls ${d.compare && d.panes === 'both' ? 'both pages' : 'the page'} to the bottom first, so they are in the picture.`)); out.push(note); }
+  const actions = el('div', 'shot-actions'); actions.append(shotLink('download', 'mem-btn primary', 'download', 'Download'), shotLink('copy', 'mem-btn', 'copy', 'Copy'));
+  return [...out, actions, el('p', 'shot-foot', 'Download saves a PNG in Downloads. Copy puts it on the clipboard.')];
+}
+function shotCard(d) {
+  const head = el('div', 'shot-head'); head.append(shotIcon('camera'), el('strong', '', 'Screenshot'));
+  if (d.state === 'off') return [head, el('p', 'card-copy', d.message)];
+  if (d.state === 'busy') return [head, ...shotProgress(d)];
+  if (d.state === 'done' || d.state === 'error') return [head, ...shotResult(d)];
+  return [head, ...shotChoose(d)];
+}
 const cards = {
+  shot: shotCard,
   cert(d) {
     const head = el('div', 'card-head ok-head', 'Certificate valid'), list = el('dl');
     row(list, 'Issued to', d.subject);
