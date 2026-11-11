@@ -80,7 +80,11 @@ const { execFileSync } = require('node:child_process');
     screen('memory.png');
     const memCard = await cardPage();
     const memClosed = memCard.waitForEvent('close');
-    await memCard.locator('a.mem-row').first().click({ noWaitAfter: true }).catch(error => { if (!memCard.isClosed()) throw error; }); await memClosed; await sleep(600);
+    // The card refreshes every 5 s; a refresh between press and release must not swallow the click (1.3.1 check failure).
+    const tabRow = await memCard.locator('a.mem-row').first().boundingBox();
+    await memCard.mouse.move(tabRow.x + tabRow.width / 2, tabRow.y + tabRow.height / 2); await memCard.mouse.down();
+    await memCard.evaluate(() => { const a = document.querySelector('a.mem-row'), id = a.href.split('/').pop(); return render({ kind: 'memory', total: 1024, tabs: 1, processes: 1, rows: [{ id, kb: 512, title: a.querySelector('.mem-title').lastChild.textContent, label: 'TAB' }], claude: 0, rest: 512 }); });
+    await memCard.mouse.up().catch(error => { if (!memCard.isClosed()) throw error; }); await memClosed; await sleep(600);
     assert.equal(await views(), before, 'a tab row closes the card and jumps to the tab');
 
     // 6. Version in the footer opens the Updates panel with the explanation.

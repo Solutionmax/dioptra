@@ -75,6 +75,9 @@ const http = require('node:http');
     const asked = await cmd('differences-ask-claude'); assert.equal(asked.ok, true); assert.equal(asked.notice, 'Summary copied. Paste it into Claude.');
     const clip = await app.evaluate(({ clipboard }) => clipboard.readText());
     assert.match(clip, /evil-cdn\.invalid only on Hostfile/); assert.match(clip, /Header differences/); assert.equal(/SECRET/.test(clip), false);
+    // Checks start a Speed measurement that loads the page in the Hostfile session; it sets the cookies again, so let it
+    // finish before Clear site data below (Windows: 5 of 10 runs found a fresh "visit" cookie).
+    await poll(s => ['done', 'error'].includes(s.speed?.status), 'Speed measurement finished');
 
     // Leaving the view restores the layout; switching tabs and navigating reset to single.
     assert.equal((await cmd('view', 'single')).ok, true); s = await st();

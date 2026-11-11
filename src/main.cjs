@@ -259,7 +259,7 @@ function drawShot(mine) {
     if (card !== mine) return;
     const height = await mine.view.webContents.executeJavaScript(`render(${JSON.stringify(shotView(mine))})`).then(Math.ceil);
     if (card === mine && placeCard(height)) await mine.view.webContents.executeJavaScript("document.documentElement.classList.add('tall')");
-  }).catch(error => console.error('Screenshot card:', error.message));
+  }).catch(error => { if (card === mine) console.error('Screenshot card:', error.message); }); // closed mid-draw: nothing to draw on
   return mine.drawing;
 }
 // Every capture has its own run number: Cancel, Try again or a closed card end the old run, so its scroll loop cannot

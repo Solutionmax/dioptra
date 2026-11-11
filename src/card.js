@@ -238,8 +238,15 @@ const cards = {
     return [head, summary, el('div','memory-section','WEBSITE PROCESS GROUPS'), tabs, system, foot];
   }
 };
+// The memory card refreshes every 5 s. Replacing a row between press and release loses the click, so a refresh
+// that arrives while the pointer is down is skipped; the next one follows 5 s later.
+let pressed = false, shown = '';
+addEventListener('pointerdown', () => { pressed = true; }, true);
+for (const type of ['pointerup', 'pointercancel', 'blur']) addEventListener(type, () => { pressed = false; }, true);
 // eslint-disable-next-line no-unused-vars
 function render(data) {
+  if (pressed && data.kind === 'memory' && shown === 'memory') return Promise.resolve(document.body.getBoundingClientRect().height);
+  shown = data.kind;
   // A card that is taller than the window gets the class back from the main process and scrolls.
   document.documentElement.classList.remove('tall');
   document.body.replaceChildren(...cards[data.kind](data));
