@@ -121,8 +121,10 @@ const {execFileSync} = require('node:child_process');
         extensions.removeExtension(extension.id);
         await extensions.loadExtension(extension.path);
       });
-      await run('location.reload()').catch(()=>{});
-      await poll(async()=>{try{return await run(`document.readyState==='complete' && typeof chrome.runtime.sendMessage==='function'`);}catch{return false;}},true);
+      // Since 1.0.107 the worker only relays for the tab in the panel's own address (sidepanel.html?tabId=), as in Chrome
+      // where every tab has its own panel. Open the panel for the test page, the way Dioptra does when Claude opens on it.
+      await run(`location.replace('/sidepanel.html?tabId=${result.tabId}')`).catch(()=>{});
+      await poll(async()=>{try{return await run(`location.search==='?tabId=${result.tabId}' && document.readyState==='complete' && typeof chrome.runtime.sendMessage==='function'`);}catch{return false;}},true);
       const coldAnchor=await run(`chrome.runtime.sendMessage({type:'CIC_IFRAME_BRIDGE_INIT',panelTabId:${result.tabId},sessionId:'dioptra-cold-anchor'})`);
       assert.equal(coldAnchor?.ok,true,JSON.stringify(coldAnchor));
       const impostorPanel=await app.evaluate(async({WebContentsView,session})=>{

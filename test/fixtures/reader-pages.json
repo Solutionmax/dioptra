@@ -1,0 +1,499 @@
+{
+ "base": "https://example.com/dir/page.html",
+ "pages": {
+  "quotes": {
+   "html": "<img src=\"a.png\"><img src='b.png'><img src=c.png><IMG SRC=D.PNG><script src=//cdn.x.com/a.js></script>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/D.PNG",
+     "image https://example.com/dir/a.png",
+     "image https://example.com/dir/b.png",
+     "image https://example.com/dir/c.png",
+     "script https://cdn.x.com/a.js"
+    ],
+    "inline": []
+   }
+  },
+  "comments": {
+   "html": "<!-- <script src=\"hidden.js\"></script> --><script src=\"shown.js\"></script><!--unterminated <img src=zz.png>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/zz.png",
+     "script https://example.com/dir/shown.js"
+    ],
+    "inline": []
+   },
+   "now": {
+    "assets": [
+     "script https://example.com/dir/shown.js"
+    ],
+    "inline": []
+   },
+   "why": "a comment without an end runs to the end of the page, as in a browser"
+  },
+  "cdata": {
+   "html": "<script>//<![CDATA[\nvar a=\"<img src=in.png>\";\n//]]></script><img src=out.png>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/out.png"
+    ],
+    "inline": [
+     "//<![CDATA[\nvar a=\"<img src=in.png>\";\n//]]>"
+    ]
+   }
+  },
+  "inlinescript": {
+   "html": "<script>var s=\"</scr\"+\"ipt>\"; var x='http://evil.com/x.js'; document.write(\"<script src=//foo.com/y.js></scr\"+\"ipt>\")</script><script src=real.js></script>",
+   "beta4": {
+    "assets": [
+     "script https://example.com/dir/real.js"
+    ],
+    "inline": [
+     "var s=\"</scr\"+\"ipt>\"; var x='http://evil.com/x.js'; document.write(\"<script src=//foo.com/y.js></scr\"+\"ipt>\")"
+    ]
+   }
+  },
+  "scriptstr": {
+   "html": "<script>var s=\"</script>\";</script><img src=after.png>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/after.png"
+    ],
+    "inline": [
+     "var s=\""
+    ]
+   }
+  },
+  "srcset": {
+   "html": "<img src=\"a.jpg\" srcset=\"a1.jpg 1x, a2.jpg 2x,a3.jpg 3x\"><picture><source srcset=\"s1.webp 400w, s2.webp 800w\" type=image/webp><source src=v.mp4></picture>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/a.jpg",
+     "image https://example.com/dir/a1.jpg",
+     "image https://example.com/dir/a2.jpg",
+     "image https://example.com/dir/a3.jpg",
+     "image https://example.com/dir/s1.webp",
+     "image https://example.com/dir/s2.webp",
+     "other https://example.com/dir/v.mp4"
+    ],
+    "inline": []
+   }
+  },
+  "style": {
+   "html": "<style>body{background:url(bg.png)} .a{background:url( 'q.png' )} .b{background:url(\"d.png\")} @font-face{src:url(//fonts.x.com/f.woff2)}</style><div style=\"background:url(inline.png)\"></div><p style='background: url(\"sq.png\")'>",
+   "beta4": {
+    "assets": [
+     "other https://example.com/dir/bg.png",
+     "other https://example.com/dir/d.png",
+     "other https://example.com/dir/inline.png",
+     "other https://example.com/dir/q.png",
+     "other https://example.com/dir/sq.png",
+     "other https://fonts.x.com/f.woff2"
+    ],
+    "inline": []
+   }
+  },
+  "styleunq": {
+   "html": "<div style=background:url(u.png)>x</div>",
+   "beta4": {
+    "assets": [],
+    "inline": []
+   },
+   "now": {
+    "assets": [
+     "other https://example.com/dir/u.png"
+    ],
+    "inline": []
+   },
+   "why": "an unquoted style attribute is read too"
+  },
+  "styleattrnoquote": {
+   "html": "<div style=\"color:red; background-image:url(u2.png)\" class=a>",
+   "beta4": {
+    "assets": [
+     "other https://example.com/dir/u2.png"
+    ],
+    "inline": []
+   }
+  },
+  "base": {
+   "html": "<base href=\"https://other.com/\"><img src=rel.png><link rel=stylesheet href=/s.css>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/rel.png",
+     "stylesheet https://example.com/s.css"
+    ],
+    "inline": []
+   },
+   "now": {
+    "assets": [
+     "image https://other.com/rel.png",
+     "stylesheet https://other.com/s.css"
+    ],
+    "inline": []
+   },
+   "why": "the page has a base address: relative addresses start there"
+  },
+  "protorel": {
+   "html": "<script src=\"//cdn.a.com/x.js\"></script><img src=\"../up.png\"><img src=\"./here.png\"><img src=\"/abs.png\"><img src=\"https://abs.com/a.png\">",
+   "beta4": {
+    "assets": [
+     "image https://abs.com/a.png",
+     "image https://example.com/abs.png",
+     "image https://example.com/dir/here.png",
+     "image https://example.com/up.png",
+     "script https://cdn.a.com/x.js"
+    ],
+    "inline": []
+   }
+  },
+  "entities": {
+   "html": "<img src=\"a.png?x=1&amp;y=2\"><script src=\"https://cdn.com/a.js?a=1&#38;b=2\"></script><link rel=stylesheet href=\"/s.css?a&amp;b\">",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/a.png?x=1&y=2",
+     "script https://cdn.com/a.js?a=1&#38;b=2",
+     "stylesheet https://example.com/s.css?a&b"
+    ],
+    "inline": []
+   },
+   "now": {
+    "assets": [
+     "image https://example.com/dir/a.png?x=1&y=2",
+     "script https://cdn.com/a.js?a=1&b=2",
+     "stylesheet https://example.com/s.css?a&b"
+    ],
+    "inline": []
+   },
+   "why": "a numeric entity in an address is decoded"
+  },
+  "newlines": {
+   "html": "<img\n src=\"nl.png\"\n alt=\"x\"\n><script\nsrc=\"nls.js\"\n></script\n>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/nl.png",
+     "script https://example.com/dir/nls.js"
+    ],
+    "inline": []
+   }
+  },
+  "cond": {
+   "html": "<!--[if IE]><script src=\"ie.js\"></script><![endif]--><!--[if !IE]><!--><script src=\"notie.js\"></script><!--<![endif]-->",
+   "beta4": {
+    "assets": [
+     "script https://example.com/dir/notie.js"
+    ],
+    "inline": []
+   }
+  },
+  "noscript": {
+   "html": "<noscript><img src=\"ns.gif\"></noscript><noscript><iframe src=\"https://ns.com/f\"></iframe></noscript>",
+   "beta4": {
+    "assets": [
+     "frame https://ns.com/f",
+     "image https://example.com/dir/ns.gif"
+    ],
+    "inline": []
+   }
+  },
+  "template": {
+   "html": "<template><img src=t.png><script src=ts.js></script></template>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/t.png",
+     "script https://example.com/dir/ts.js"
+    ],
+    "inline": []
+   }
+  },
+  "svg": {
+   "html": "<svg><use href=\"#a\"/><image href=\"svgimg.png\"/><image xlink:href=\"x.png\"/></svg>",
+   "beta4": {
+    "assets": [],
+    "inline": []
+   },
+   "now": {
+    "assets": [
+     "image https://example.com/dir/svgimg.png",
+     "image https://example.com/dir/x.png"
+    ],
+    "inline": []
+   },
+   "why": "an image inside svg loads"
+  },
+  "data": {
+   "html": "<div data-src=\"lazy.png\" data-href=\"https://x.com/\"><a href=\"https://a.com/\">l</a><img data-src=\"l.png\" src=\"p.png\"></div>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/p.png"
+    ],
+    "inline": []
+   }
+  },
+  "links": {
+   "html": "<link rel=\"stylesheet\" href=\"s.css\"><link rel=\"preload\" as=\"script\" href=\"p.js\"><link rel=\"icon\" href=\"f.ico\"><link rel=\"shortcut icon\" href=\"f2.ico\"><link rel=canonical href=\"https://example.com/c\"><link rel=\"stylesheet\" media=print href=print.css>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/f.ico",
+     "image https://example.com/dir/f2.ico",
+     "script https://example.com/dir/p.js",
+     "stylesheet https://example.com/dir/print.css",
+     "stylesheet https://example.com/dir/s.css"
+    ],
+    "inline": []
+   }
+  },
+  "iframe": {
+   "html": "<iframe src=\"https://ads.com/f\"></iframe><frame src=fr.html><embed src=e.swf><object data=o.swf></object><video src=v.mp4></video><audio src=a.mp3></audio><input type=image src=im.png><input type=text src=no.png>",
+   "beta4": {
+    "assets": [
+     "frame https://ads.com/f",
+     "frame https://example.com/dir/fr.html",
+     "image https://example.com/dir/im.png",
+     "other https://example.com/dir/a.mp3",
+     "other https://example.com/dir/e.swf",
+     "other https://example.com/dir/o.swf",
+     "other https://example.com/dir/v.mp4"
+    ],
+    "inline": []
+   }
+  },
+  "upper": {
+   "html": "<SCRIPT SRC=\"U.js\"></SCRIPT><IFRAME SRC=\"https://U.com\"></IFRAME><LINK REL=\"STYLESHEET\" HREF=\"U.css\">",
+   "beta4": {
+    "assets": [
+     "frame https://u.com/",
+     "script https://example.com/dir/U.js",
+     "stylesheet https://example.com/dir/U.css"
+    ],
+    "inline": []
+   }
+  },
+  "scriptend": {
+   "html": "<script src=a.js></script ><script>inline1()</script ><script>inline2()</script foo><img src=after2.png>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/after2.png",
+     "script https://example.com/dir/a.js"
+    ],
+    "inline": [
+     "inline1()"
+    ]
+   },
+   "now": {
+    "assets": [
+     "image https://example.com/dir/after2.png",
+     "script https://example.com/dir/a.js"
+    ],
+    "inline": [
+     "inline1()",
+     "inline2()"
+    ]
+   },
+   "why": "\"</script foo>\" ends a script, so the second inline script is one"
+  },
+  "scriptsend": {
+   "html": "<script>a()</scripts><img src=afters.png></script>",
+   "beta4": {
+    "assets": [],
+    "inline": [
+     "a()</scripts><img src=afters.png>"
+    ]
+   }
+  },
+  "noclose": {
+   "html": "<script src=\"nc.js\"><script>inline()</script><img src=ncimg.png>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/ncimg.png",
+     "script https://example.com/dir/nc.js"
+    ],
+    "inline": []
+   }
+  },
+  "attrgt": {
+   "html": "<img alt=\"a > b\" src=\"gt.png\"><img src=\"x.png\" alt='it\"s'>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/x.png"
+    ],
+    "inline": []
+   },
+   "now": {
+    "assets": [
+     "image https://example.com/dir/gt.png",
+     "image https://example.com/dir/x.png"
+    ],
+    "inline": []
+   },
+   "why": "a \">\" inside a quoted attribute does not end the tag"
+  },
+  "dashtag": {
+   "html": "<img-x src=cust.png><my-img src=my.png>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/cust.png"
+    ],
+    "inline": []
+   },
+   "now": {
+    "assets": [],
+    "inline": []
+   },
+   "why": "<img-x> is not an <img>"
+  },
+  "jsontype": {
+   "html": "<script type=\"application/ld+json\">{\"url\":\"https://schema.org\"}</script><script type=\"text/template\"><img src=tt.png></script><script type=\"text/x-handlebars\">x</script><script type=module>import \"./m.js\"</script>",
+   "beta4": {
+    "assets": [],
+    "inline": [
+     "import \"./m.js\""
+    ]
+   }
+  },
+  "attrdup": {
+   "html": "<img src=first.png src=second.png>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/first.png"
+    ],
+    "inline": []
+   }
+  },
+  "attrnoval": {
+   "html": "<img src>",
+   "beta4": {
+    "assets": [],
+    "inline": []
+   }
+  },
+  "unterm_attr": {
+   "html": "<img src=\"unterminated.png><img src=after3.png>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/after3.png"
+    ],
+    "inline": []
+   },
+   "now": {
+    "assets": [],
+    "inline": []
+   },
+   "why": "an attribute whose quote never closes takes the rest of the page with it"
+  },
+  "slashselfclose": {
+   "html": "<img src=a.png/><img src=\"b.png\"/><br/><img src=x.png />",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/a.png/",
+     "image https://example.com/dir/b.png",
+     "image https://example.com/dir/x.png"
+    ],
+    "inline": []
+   }
+  },
+  "turkish": {
+   "html": "<head><meta name=description content=\"İSTANBUL İSTANBUL İSTANBUL\"><title>İstanbul Otel</title></head><body><img src=tr1.png><script src=//cdn.tr.com/a.js></script><iframe src=\"https://evil.com/f\"></iframe></body>",
+   "beta4": {
+    "assets": [
+     "frame https://evil.com/f",
+     "image https://example.com/dir/tr1.png",
+     "script https://cdn.tr.com/a.js"
+    ],
+    "inline": []
+   }
+  },
+  "urlnoclose": {
+   "html": "<style>a{background:url(x.png}</style><style>b{background:url(y.png)}</style><div style=\"background:url('z.png)\"><img src=ok.png>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/ok.png",
+     "other https://example.com/dir/'z.png",
+     "other https://example.com/dir/y.png"
+    ],
+    "inline": []
+   },
+   "now": {
+    "assets": [
+     "image https://example.com/dir/ok.png",
+     "other https://example.com/dir/x.png%7D",
+     "other https://example.com/dir/y.png"
+    ],
+    "inline": []
+   },
+   "why": "a quoted url( without its end is skipped, the next one is still read; the unquoted one runs to the next \")\""
+  },
+  "urlspace": {
+   "html": "<style>a{background:url(a b.png)} b{background:url(  c.png  )} c{background:URL(d.png)} d{x:url(\"\")} e{background:url(data:image/png;base64,AAAA)}</style>",
+   "beta4": {
+    "assets": [
+     "other https://example.com/dir/c.png",
+     "other https://example.com/dir/d.png"
+    ],
+    "inline": []
+   },
+   "now": {
+    "assets": [
+     "other https://example.com/dir/a",
+     "other https://example.com/dir/c.png",
+     "other https://example.com/dir/d.png"
+    ],
+    "inline": []
+   },
+   "why": "an unquoted url( ends at white space"
+  },
+  "srcsetmulti": {
+   "html": "<img srcset=\"a.jpg 1x,\n    b.jpg 2x\">",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/a.jpg",
+     "image https://example.com/dir/b.jpg"
+    ],
+    "inline": []
+   }
+  },
+  "styleafterstyle": {
+   "html": "<style>a{}</style><link rel=stylesheet href=after.css><style>b{background:url(w.png)}",
+   "beta4": {
+    "assets": [
+     "stylesheet https://example.com/dir/after.css"
+    ],
+    "inline": []
+   },
+   "now": {
+    "assets": [
+     "other https://example.com/dir/w.png",
+     "stylesheet https://example.com/dir/after.css"
+    ],
+    "inline": []
+   },
+   "why": "a <style> without its end tag is still a style sheet"
+  },
+  "stylenoclose": {
+   "html": "<style>a{background:url(x.png)}<img src=ni.png>",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/ni.png"
+    ],
+    "inline": []
+   },
+   "now": {
+    "assets": [
+     "other https://example.com/dir/x.png"
+    ],
+    "inline": []
+   },
+   "why": "what follows a <style> without end tag is style text, not markup"
+  },
+  "rel": {
+   "html": "<link rel=\"alternate stylesheet\" href=alt.css><link rel=\"apple-touch-icon\" href=touch.png><link rel=\"dns-prefetch\" href=\"//d.com\"><link rel=preconnect href=\"https://p.com\">",
+   "beta4": {
+    "assets": [
+     "image https://example.com/dir/touch.png",
+     "stylesheet https://example.com/dir/alt.css"
+    ],
+    "inline": []
+   }
+  }
+ }
+}

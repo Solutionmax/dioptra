@@ -3,23 +3,18 @@
 // on Live. Pure logic: main.cjs fetches anonymously through the same routes as Differences and passes plain results.
 const { STATUS_CODES } = require('node:http');
 const { isFirstParty } = require('./differences.cjs');
+const { readPage, stripComments } = require('./html-read.cjs');
+const { sitemapsInRobots } = require('./site-scope.cjs');
 const { serverKind } = require('./speed.cjs');
 
-const ATTRIBUTE = /([^\s"'<>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
-const URL_ATTRS = ['src', 'href', 'srcset', 'action', 'poster', 'data-src', 'data-srcset'];
 const STAGING = /^(staging|stage|dev|test|old)\d*\./;
-const MAX_ROWS = 40, MAX_TEXT = 300;
+const MAX_ROWS = 40, MAX_TEXT = 300, MAX_VALUES = 3000;
 const CONTROL = /[\u0000-\u001f\u007f​-‏‪-‮⁦-⁩]/g;
 const clean = (text, max = MAX_TEXT) => String(text ?? '').replace(CONTROL, ' ').trim().slice(0, max);
 
-function attributes(text) {
-  const result = {};
-  for (const m of String(text).matchAll(ATTRIBUTE)) result[m[1].toLowerCase()] ??= m[2] ?? m[3] ?? m[4] ?? '';
-  return result;
-}
 const decode = value => String(value).replace(/&amp;/gi, '&').replace(/&#0*38;/g, '&').replace(/&#x0*2f;/gi, '/').trim();
 function absolute(value, base) {
-  try { const u = new URL(decode(value), base); return /^https?:$/.test(u.protocol) && u.hostname ? u : null; } catch { return null; }
+  try { const u = new URL(String(value).trim(), base); return /^https?:$/.test(u.protocol) && u.hostname ? u : null; } catch { return null; }
 }
 const wwwTwin = host => (host.startsWith('www.') ? host.slice(4) : `www.${host}`);
 const bareIP = ip => String(ip || '').replace(/^\[|\]$/g, '').replace(/^::ffff:/i, '').toLowerCase();
@@ -27,28 +22,15 @@ const noindex = value => /\b(noindex|none)\b/i.test(value || '');
 const nofollow = value => /\b(nofollow|none)\b/i.test(value || '');
 const tidy = value => clean(value).toLowerCase().split(',').map(s => s.trim()).filter(Boolean).join(', ');
 
-// The parts of one HTML document the checks need. Comments never count.
+// The parts of one HTML document the checks need, from the one reading of the page (html-read.cjs): attribute values are
+// decoded as a browser decodes them, and an address is already whole when the page has a <base href>.
 function pageFacts(html, pageURL) {
-  const text = String(html || '').replace(/<!--[\s\S]*?-->/g, ' '), robots = [], tags = [];
-  let canonical = '', generator = '';
-  const nav = [text.search(/<nav\b/i), text.search(/<\/nav\s*>/i)], footer = text.search(/<footer\b/i);
-  for (const m of text.matchAll(/<([a-z][a-z0-9-]*)\b([^>]*)>/gi)) {
-    const tag = m[1].toLowerCase(), a = attributes(m[2]);
-    if (tag === 'meta' && /^(robots|googlebot)$/i.test(a.name || '')) robots.push(a.content || '');
-    else if (tag === 'meta' && /^generator$/i.test(a.name || '')) generator ||= a.content || '';
-    else if (tag === 'link' && /(^|\s)canonical(\s|$)/i.test(a.rel || '') && a.href && !canonical) canonical = absolute(a.href, pageURL)?.href || clean(a.href);
-    const where = m.index > footer && footer >= 0 ? ' in the footer' : m.index > nav[0] && nav[0] >= 0 && (nav[1] < 0 || m.index < nav[1]) ? ' in the menu' : '';
-    const label = tag === 'a' ? clean(text.slice(m.index + m[0].length, m.index + m[0].length + 400).split(/<\/a\s*>/i)[0].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' '), 40) : '';
-    for (const name of URL_ATTRS) {
-      if (!a[name]) continue;
-      const values = /srcset$/.test(name) ? a[name].split(',').map(p => p.trim().split(/\s+/)[0]).filter(Boolean) : [a[name]];
-      for (const value of values) tags.push({ tag, attr: name, value, label, where });
-    }
-  }
-  return { robots: robots.map(v => clean(v)).filter(Boolean).join(', '), canonical, tags, wordpress: /wordpress/i.test(generator) || /\/wp-(content|includes)\//i.test(text) };
+  const page = readPage(html || '', pageURL);
+  return { robots: page.robots.map(v => clean(v)).filter(Boolean).join(', '), canonical: page.canonical ? absolute(page.canonical, page.base)?.href || clean(page.canonical) : '', tags: page.tags, cut: page.cut,
+    wordpress: /wordpress/i.test(page.generator) || /\/wp-(content|includes)\//i.test(String(html || '')) };
 }
 function describe(t) {
-  const file = () => { try { return new URL(decode(t.value), 'https://x.invalid/').pathname.split('/').filter(Boolean).pop() || ''; } catch { return ''; } };
+  const file = () => { try { return new URL(t.value, 'https://x.invalid/').pathname.split('/').filter(Boolean).pop() || ''; } catch { return ''; } };
   if (t.tag === 'a') return `link${t.label ? ` "${t.label}"` : ''}${t.where}`;
   if (t.tag === 'form') return `form action${t.where}`;
   const name = file();
@@ -70,9 +52,14 @@ function oldAddresses({ hostfileHTML, liveHTML = '', pageURL, oldIP = '', oldHos
     if (seen.has(key) || rows.length >= MAX_ROWS) return;
     seen.add(key); rows.push({ kind, found: clean(found), url: clean(url, 2000), where: clean(where), from: clean(from, 2000), why });
   };
-  const consider = (value, where) => {
-    if (live.includes(value)) return;
-    const u = absolute(value, pageURL);
+  // Each value is looked up in the Live page: every distinct value once, and at most MAX_VALUES of them.
+  // An address in a tag is decoded, so it is looked up among the decoded addresses of Live too.
+  const tried = new Set(), liveValues = new Set(pageFacts(liveHTML, pageURL).tags.map(t => t.value));
+  const consider = (value, where, decoded = value) => {
+    if (tried.has(value) || tried.size >= MAX_VALUES || rows.length >= MAX_ROWS) return;
+    tried.add(value);
+    if (liveValues.has(value) || liveValues.has(decoded) || live.includes(value)) return;
+    const u = absolute(decoded, pageURL);
     if (!u) return;
     const h = u.hostname.toLowerCase(), origin = `${u.protocol}//${u.host}`;
     const tilde = isIP(bareIP(h)) || isFirstParty(h, host) || oldNames.has(h) ? (u.pathname.match(/^\/~[^/]+\//) || [''])[0] : '';
@@ -83,8 +70,8 @@ function oldAddresses({ hostfileHTML, liveHTML = '', pageURL, oldIP = '', oldHos
   };
   for (const t of facts.tags) consider(t.value, describe(t));
   // Scripts and JSON keep addresses too, often with escaped slashes ("https:\/\/198.51.100.24\/~user\/").
-  const text = String(hostfileHTML || '').replace(/<!--[\s\S]*?-->/g, ' ').replace(/\\\//g, '/');
-  for (const m of text.matchAll(/https?:\/\/[^\s"'<>\\)]+/gi)) consider(m[0], 'in a script or text of the page');
+  const text = stripComments(hostfileHTML || '').replace(/\\\//g, '/');
+  for (const m of text.matchAll(/https?:\/\/[^\s"'<>\\)]+/gi)) consider(m[0], 'in a script or text of the page', decode(m[0]));
   const rank = { ip: 0, tilde: 1, staging: 2, http: 3 };
   return rows.sort((a, b) => rank[a.kind] - rank[b.kind]);
 }
@@ -112,7 +99,7 @@ function standardAddresses({ pageURL, hostfileHTML = '', liveHTML = '', wordpres
   if (link) list.push({ id: 'link', name: link.pathname, address: link.pathname, url: link.href, note: 'internal link of this page' });
   if (wordpress) list.push({ id: 'xmlrpc', name: '/xmlrpc.php', address: '/xmlrpc.php', url: `${origin}/xmlrpc.php`, sensitive: true, note: 'usually blocked against password guessing' });
   list.push({ id: 'robots', name: '/robots.txt', address: '/robots.txt', url: `${origin}/robots.txt`, note: 'rules for search engines' });
-  const named = [...String(robotsLive).matchAll(/^\s*sitemap:\s*(\S+)/gim)].map(m => absolute(m[1], origin)).find(u => u && u.hostname.toLowerCase() === host);
+  const named = sitemapsInRobots(robotsLive).map(value => absolute(value.split(/\s/, 1)[0], origin)).find(u => u && u.hostname.toLowerCase() === host);
   const sitemap = named ? named.pathname + named.search : wordpress ? '/wp-sitemap.xml' : '/sitemap.xml';
   list.push({ id: 'sitemap', name: sitemap, address: sitemap, url: `${origin}${sitemap}`, note: 'sitemap for search engines' });
   if (wordpress) list.push({ id: 'login', name: '/wp-login.php', address: '/wp-login.php', url: `${origin}/wp-login.php`, note: 'login page' });
@@ -128,7 +115,7 @@ function standardAddresses({ pageURL, hostfileHTML = '', liveHTML = '', wordpres
 function internalLink(hostfileHTML, liveHTML, pageURL) {
   const page = new URL(pageURL), host = page.hostname.toLowerCase();
   const pick = html => pageFacts(html, pageURL).tags.filter(t => t.tag === 'a' && t.attr === 'href').map(t => absolute(t.value, pageURL))
-    .filter(u => u && u.hostname.toLowerCase() === host && u.protocol === page.protocol && u.pathname !== page.pathname && u.pathname !== '/'
+    .filter(u => u && u.hostname.toLowerCase() === host && u.protocol === page.protocol && u.port === page.port && u.pathname !== page.pathname && u.pathname !== '/'
       && !/^\/(wp-admin|wp-login|wp-json|feed|comments|xmlrpc|cart|checkout|my-account|cgi-bin)\b/i.test(u.pathname) && !/\.[a-z0-9]{2,5}$/i.test(u.pathname) && !u.search);
   const mine = pick(hostfileHTML), theirs = new Set(pick(liveHTML).map(u => u.pathname)), count = new Map();
   for (const u of mine) count.set(u.pathname, (count.get(u.pathname) || 0) + 1);
@@ -330,7 +317,8 @@ function soloChecksReport({ pageURL, hostfile, standard = [], copies = [] }) {
     rows, commands: commands.length ? commands : rows.map(r => ({ found: r.found, where: r.where, command: '' })) });
   needLive.push({ name: 'old server IP in the page', why: 'unknown without Live' });
   // 3. Standard addresses, judged on what a good server gives.
-  const named = /^\s*sitemap:/im.test(String(robotsFetch?.hostfile?.body || ''));
+  // The whole body, linear: [ \t] cannot cross a line, unlike the old ^\s* with the m flag (quadratic on empty lines).
+  const named = /(?:^|\n)[ \t]*sitemap:/i.test(String(robotsFetch?.hostfile?.body || ''));
   for (const s of standard) {
     if (s.check.id === 'www') { needLive.unshift({ name: s.check.name, why: 'which name is the main one' }); continue; }
     const v = soloStandardVerdict(s.check, s.hostfile, { wordpress, named }), h = statusLabel(s.hostfile);

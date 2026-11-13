@@ -17,7 +17,7 @@ A browser for website migrations: open any site on its new server before DNS cha
   <a href="docs/technical-notes.md">Technical notes</a>
 </p>
 
-Screenshots show Dioptra **1.3.1** with a local demonstration website.
+Screenshots show Dioptra **1.4.0** with a local demonstration website.
 
 ![Dioptra comparing the new server (Hostfile) with the live site side by side](docs/screenshots/compare.png)
 
@@ -32,25 +32,26 @@ Moving a website to a new server usually means editing `/etc/hosts`, flushing DN
 - **DNS records at a click.** The A, AAAA, CNAME, MX, TXT and NS records of the domain. In Compare the zone on the new server sits next to public DNS, so a mail or TXT record that did not come along shows up before you switch.
 - **See what the site runs on.** WordPress, WooCommerce, Drupal, Laravel and more, with the PHP version when the server reports it. In Compare a different PHP version on the old and new server is marked.
 - **Compare.** The new server and the live site side by side, each with its own cookies. Or put another URL on the right, such as the copy of a site on a temporary test domain. Drag the bar between the panes to give one side more room.
-- **Screenshots.** The camera button saves the visible area or the full page as a PNG, or copies it to paste straight away. Pages that load images only as you scroll are scrolled first, so nothing is missing. In Compare both panes become one image, each labelled with its server and IP.
-- **Differences.** Dioptra fetches the page from both servers and shows what changed in the HTML, the headers and the external domains the page loads. Injected scripts and other signs of a hacked site stand out immediately.
+- **Zoom.** The zoom level shows in the address bar and in each pane bar. In Compare both panes always zoom together, so they stay side by side.
+- **Screenshots.** The camera button saves the visible area or the full page, or copies it to paste straight away. Choose **Original** (PNG), **Sharp** (JPEG, about five times smaller, the default) or **Small** (half size, for tickets and email). Pages that load images only as you scroll are scrolled first, so nothing is missing. In Compare both panes become one image, each labelled with its server and IP.
+- **Differences.** Dioptra fetches the page from both servers and shows what changed in the HTML, the headers and the external domains the page loads. Injected scripts and other signs of a hacked site stand out immediately. **Whole site** compares a list of pages from the sitemap (up to 50) and tells you what to fix once for the site and which pages have a problem of their own. Pages are read the way a browser reads them, so a script hidden in odd markup is still found.
 - **Files, Speed and Checks.** See which files failed to load only on the new server, or still come from the old one. Measure both servers at the same moment, with Google's thresholds and a filmstrip, and get the reason when the new one is slower. Checks catch a site that tells search engines not to index it, old addresses left in the page and standard addresses that answer differently. A site that only exists on the new server is judged on its own.
 - **Claude built in.** Install the official Claude in Chrome extension and let Claude read, click and screenshot your tabs, including both sides of a comparison.
 - **Made for testing servers.** Certificate errors on a new server can be skipped, and a Live page with a bad certificate can be opened with **Continue anyway** for that one certificate. Claude and sign-in services always keep strict certificate checks.
 
 ## Download
 
-Current release: [Dioptra v1.3.1](https://github.com/Solutionmax/dioptra/releases/tag/v1.3.1).
+Current release: [Dioptra v1.4.0](https://github.com/Solutionmax/dioptra/releases/tag/v1.4.0).
 
 | Platform | Download |
 | --- | --- |
-| macOS, Apple Silicon (M1 and later) | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.3.1/Dioptra-1.3.1-mac-arm64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.3.1/Dioptra-1.3.1-mac-arm64.zip) |
-| macOS, Intel | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.3.1/Dioptra-1.3.1-mac-x64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.3.1/Dioptra-1.3.1-mac-x64.zip) |
-| Windows 11 and 10, 64 bit | [Installer](https://github.com/Solutionmax/dioptra/releases/download/v1.3.1/Dioptra-1.3.1-win-x64.exe) |
-| Linux x86-64 | [AppImage](https://github.com/Solutionmax/dioptra/releases/download/v1.3.1/Dioptra-1.3.1-linux-x86_64.AppImage) |
-| Ubuntu / Debian, amd64 | [.deb package](https://github.com/Solutionmax/dioptra/releases/download/v1.3.1/Dioptra-1.3.1-ubuntu-amd64.deb) |
+| macOS, Apple Silicon (M1 and later) | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.4.0/Dioptra-1.4.0-mac-arm64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.4.0/Dioptra-1.4.0-mac-arm64.zip) |
+| macOS, Intel | [DMG](https://github.com/Solutionmax/dioptra/releases/download/v1.4.0/Dioptra-1.4.0-mac-x64.dmg) · [ZIP](https://github.com/Solutionmax/dioptra/releases/download/v1.4.0/Dioptra-1.4.0-mac-x64.zip) |
+| Windows 11 and 10, 64 bit | [Installer](https://github.com/Solutionmax/dioptra/releases/download/v1.4.0/Dioptra-1.4.0-win-x64.exe) |
+| Linux x86-64 | [AppImage](https://github.com/Solutionmax/dioptra/releases/download/v1.4.0/Dioptra-1.4.0-linux-x86_64.AppImage) |
+| Ubuntu / Debian, amd64 | [.deb package](https://github.com/Solutionmax/dioptra/releases/download/v1.4.0/Dioptra-1.4.0-ubuntu-amd64.deb) |
 
-[SHA-256 checksums](https://github.com/Solutionmax/dioptra/releases/download/v1.3.1/SHA256SUMS.txt) · [Verification and platform coverage](docs/verification.md) · [All releases](https://github.com/Solutionmax/dioptra/releases)
+[SHA-256 checksums](https://github.com/Solutionmax/dioptra/releases/download/v1.4.0/SHA256SUMS.txt) · [Verification and platform coverage](docs/verification.md) · [All releases](https://github.com/Solutionmax/dioptra/releases)
 
 ## Install
 
@@ -88,7 +89,7 @@ Run it as a normal user. If FUSE is not available, add `--appimage-extract-and-r
 Download the `.deb` from the release, then install it with:
 
 ```sh
-sudo apt install ./Dioptra-1.3.1-ubuntu-amd64.deb
+sudo apt install ./Dioptra-1.4.0-ubuntu-amd64.deb
 ```
 
 Open **Dioptra** from your applications menu as your normal user. The package manager handles dependencies.
@@ -148,6 +149,7 @@ Click **Differences**. Dioptra downloads the page from both servers and compares
 - **Checks:** noindex in meta robots, X-Robots-Tag, robots.txt or canonical; old addresses left in the page (old server IP, temporary `/~user/` URL, staging copies, `http://` links) with `wp search-replace` dry run commands; and standard addresses such as robots.txt, the sitemap, xmlrpc.php, wp-login.php, http to https, www and a page that must give 404.
 - **HTML:** the changed lines, with a little context.
 - **Headers:** server software, PHP version, caching and security headers that differ.
+- **Add-ons:** extra checks installed under **Settings → Add-ons** with a personal code, shown as their own part of Differences.
 - **Findings:** a plain-language summary, with serious items in red, such as a script that loads only on the live site or inline code that looks obfuscated.
 
 Compare shows you whether both sides *look* the same. Differences shows what the servers actually *send*. It can highlight unexpected scripts or injected markup worth investigating.

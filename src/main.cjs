@@ -4,7 +4,7 @@ const { createLibrary } = require('./library.cjs');
 const { randomUUID, X509Certificate } = require('node:crypto');
 const { shareClaudeSession } = require('./claude-session.cjs');
 const { app, BaseWindow, BrowserWindow, WebContentsView, ipcMain, session, dialog, Menu, clipboard, ClipboardItem, shell } = require('electron');
-const { probe: shotProbe, capturePanes, fileName: shotFileName, savePng, copyPng, Cancelled } = require('./screenshot.cjs');
+const { probe: shotProbe, capturePanes, fileName: shotFileName, saveShot, copyPng, Cancelled } = require('./screenshot.cjs');
 const path = require('node:path');
 const dns = require('node:dns').promises;
 const fs = require('node:fs/promises');
@@ -12,7 +12,7 @@ const { createClaude } = require('./claude.cjs');
 const { directoryName } = require('./claude-install.cjs');
 const { createClaudeUpdates, recoverClaudeUpdate } = require('./claude-update.cjs');
 const { pathToFileURL } = require('node:url');
-const { ptrName, certSummary, daysLeft, ROUTE_BAR_HEIGHT, FOOTER_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, compareLayout, validateRules, expandRules, parseServers, MAX_SERVER_CSV, navigationURL, readSettings, saveSettings, cancelNavigation } = require('./core.cjs');
+const { ptrName, certSummary, daysLeft, ROUTE_BAR_HEIGHT, FOOTER_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, compareLayout, validateRules, expandRules, parseServers, MAX_SERVER_CSV, navigationURL, readSettings, saveSettings, cancelNavigation, zoomStep, zoomPreset, zoomLabel } = require('./core.cjs');
 const { fetchDocument, buildReport, summaryText, isFirstParty } = require('./differences.cjs');
 const { createRecord, responseOutcome, errorOutcome, consoleOutcome, recordFailure, recordLoaded, recordOld, recordError, paneSummary, filesView, filesLines, filesText, header, sameDocument } = require('./resource-check.cjs');
 const { observeRequests } = require('./web-requests.cjs');
@@ -21,6 +21,9 @@ const { speedLines } = require('./speed.cjs');
 const { pageFacts, standardAddresses, checksReport, soloChecksReport, checksLines, tabNoindex } = require('./site-checks.cjs');
 const { liveReason, soloFindings, failingHost, needsAddress } = require('./live-reason.cjs');
 const { dnsReport, canLookup } = require('./dns-records.cjs');
+const { createAddons, reportLines: addonLines } = require('./addons.cjs');
+const { createBudget, BudgetError, StoppedError, forSite, bareHost, BROWSE, COMPARE } = require('./host-budget.cjs');
+const { pageTitle, sitemapsInRobots, parseSitemap, pageOf, pickPages, pastedPages, pageModel, siteResult, redirectStep, leftFindings, DEFAULT_PAGES, MAX_PAGES, PAGE_CHOICES, SITEMAP_BODY, SITEMAP_CHILDREN, SITEMAP_PATHS } = require('./site-scope.cjs');
 
 // Keep the original profile through the Hostlane and Dioptra renames.
 app.setPath('userData', path.join(app.getPath('appData'), 'Migratiebrowser'));
@@ -176,6 +179,8 @@ function dnsTarget(tab) {
 }
 function cardData(kind, id) {
   if (kind === 'shot') return {};
+  if (kind === 'zoom') return zoomView();
+  if (kind === 'addon') { const t = tabs.get(id); return t ? addonCard(t) : null; }
   if (kind === 'memory') return memoryData();
   if (['cache-menu','tools','about'].includes(kind)) return { version: app.getVersion(), dock: config.devtoolsDock, open: Boolean(current()?.toolsOpen) };
   const tab = tabs.get(id); if (!tab) return null;
@@ -186,7 +191,7 @@ function cardData(kind, id) {
   const cert = kind === 'cert' && !tab.loading && !tab.error && observed?.verified ? observed : null;
   return cert ? { ...cert, daysLeft: daysLeft(cert.expires) } : null;
 }
-const CARD_WIDTH = { shot: 340, cert: 330, dns: 440, site: 840, 'cache-menu': 400, cache: 380, tools: 310, about: 330, memory: 390 }, DNS_TABLE_WIDTH = 780;
+const CARD_WIDTH = { addon: 460, shot: 340, zoom: 270, cert: 330, dns: 440, site: 840, 'cache-menu': 400, cache: 380, tools: 310, about: 330, memory: 390 }, DNS_TABLE_WIDTH = 780;
 // Returns true when the card had to be cut off at the bottom of the window (the content exceeds the available window).
 function placeCard(height) {
   if (!win || win.isDestroyed()) return false;
@@ -218,8 +223,9 @@ async function showDns(mine) {
 }
 // Camera button: the visible area or the full page, of the active tab or of the Compare panes (one image with a label per
 // pane). The choice is kept while Dioptra runs. The last picture stays until the card closes, so Copy after Download
-// (or the other way round) needs no second capture.
-const shotChoice = { area: 'visible', panes: 'both' };
+// (or the other way round) needs no second capture. Quality: Original (PNG), Sharp (JPEG 90 %) or Small (JPEG 80 %, half).
+const shotChoice = { area: 'visible', panes: 'both', quality: 'sharp' };
+const SHOT_QUALITY = { original: 'Original', sharp: 'Sharp', small: 'Small' };
 const plainIP = ip => String(ip || '').replace(/^\[|\]$/g, '').replace(/^::ffff:/i, '');
 function shotTarget() {
   if (viewMode === 'differences') return { off: 'Switch to Single or Compare to take a screenshot.' };
@@ -246,7 +252,7 @@ function shotNotes(s) {
   return { visible: `What you see now, ${n}${fmt(width)} × ${fmt(tall)}`, full: `Top to bottom, ${n}${n ? 'up to ' : `${fmt(width)} × `}${fmt(full)} px${n ? ' tall' : ''}` };
 }
 function shotView(mine) {
-  const s = mine.shot, base = { kind: 'shot', state: s.state, area: shotChoice.area, panes: shotChoice.panes, compare: Boolean(s.compare), message: s.message || '' };
+  const s = mine.shot, base = { kind: 'shot', state: s.state, area: shotChoice.area, panes: shotChoice.panes, quality: shotChoice.quality, compare: Boolean(s.compare), message: s.message || '' };
   if (s.state === 'busy') return { ...base, progress: s.progress };
   if (s.state === 'done' || s.state === 'error') { const r = s.result; return { ...base, result: r && { name: r.name, size: r.size, saved: r.saved, copied: r.copied, cut: r.cut } }; }
   if (s.state === 'off') return base;
@@ -272,12 +278,25 @@ async function shotPicture(mine) {
   if (!alive()) throw new Cancelled();
   const spec = { host, url, version: app.getVersion(), panes: shots,
     when: when.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) };
-  const image = await win.webContents.executeJavaScript(`window.composeShot(${JSON.stringify(spec)})`);
-  const png = Buffer.from(String(image?.png || ''), 'base64');
-  if (png.length < 8 || png.readUInt32BE(0) !== 0x89504e47) throw new Error('The picture could not be made.');
-  const what = list.length > 1 ? 'compare' : panes[0].live ? 'live' : 'new server';
-  return { png, name: shotFileName(host, what, when), cut: shots.some(p => p.cut), saved: false, copied: false,
-    size: `${image.width.toLocaleString('en-GB')} × ${image.height.toLocaleString('en-GB')} px${list.length > 1 ? ' · New server and Live in one image' : ''}` };
+  const what = list.length > 1 ? 'compare' : panes[0].live ? 'live' : 'new server', quality = shotChoice.quality;
+  return { spec, quality, name: shotFileName(host, what, when, quality), cut: shots.some(p => p.cut), compare: list.length > 1, saved: false, copied: false };
+}
+// The picture as a file (PNG or JPEG, by its quality) or as PNG for the clipboard. Each is made once, from the captures
+// the result keeps, so Copy after a Sharp download needs no second capture.
+const isPng = b => b.length > 8 && b.readUInt32BE(0) === 0x89504e47, isJpeg = b => b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+const shotKey = (r, png) => (png || r.quality === 'original' ? 'png' : 'jpeg');
+async function shotEncode(r, png) {
+  const key = shotKey(r, png);
+  if (r[key]) return r[key];
+  const image = await win.webContents.executeJavaScript(`window.composeShot(${JSON.stringify({ ...r.spec, quality: r.quality, png: key === 'png' })})`);
+  const bytes = Buffer.from(String(image?.data || ''), 'base64');
+  if (!(key === 'png' ? isPng(bytes) : isJpeg(bytes))) throw new Error('The picture could not be made.');
+  return Object.assign(r, { [key]: bytes, width: image.width, height: image.height })[key];
+}
+// "3.2 MB · Sharp, 2,880 × 17,748 px": what was saved or copied, so it is clear what goes out.
+function shotSize(r, bytes) {
+  const amount = bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${amount} · ${SHOT_QUALITY[r.quality]}, ${r.width.toLocaleString('en-GB')} × ${r.height.toLocaleString('en-GB')} px${r.compare ? ' · New server and Live in one image' : ''}`;
 }
 async function shotDeliver(mine, action) {
   const s = mine.shot;
@@ -289,13 +308,22 @@ async function shotDeliver(mine, action) {
       s.result = await shotPicture(mine);
     }
     if (card !== mine) return;
+    const png = action === 'copy';
+    if (!s.result[shotKey(s.result, png)]) { s.state = 'busy'; s.progress = { title: 'Making the picture…', pct: 92, steps: (s.progress?.steps || []).map(([, text]) => ['ok', text]) }; drawShot(mine); }
+    const run = s.run, bytes = await shotEncode(s.result, png);
+    if (card !== mine) return;
+    if (s.run !== run) { // Cancel while making the picture: nothing saved or copied
+      if (s.result.saved || s.result.copied) s.state = 'done'; else { s.state = 'choose'; s.result = null; }
+      return drawShot(mine);
+    }
     if (action === 'download') {
-      const file = savePng(app.getPath('downloads'), s.result.name, s.result.png);
-      Object.assign(s.result, { file, name: path.basename(file), saved: true });
-      library.download({ id: randomUUID(), name: s.result.name, url: '', path: file, state: 'completed', received: s.result.png.length, total: s.result.png.length, createdAt: Date.now() });
+      const file = saveShot(app.getPath('downloads'), s.result.name, bytes);
+      Object.assign(s.result, { file, name: path.basename(file), saved: true, size: shotSize(s.result, bytes.length) });
+      library.download({ id: randomUUID(), name: s.result.name, url: '', path: file, state: 'completed', received: bytes.length, total: bytes.length, createdAt: Date.now() });
       emit();
     } else {
-      await copyPng(clipboard, ClipboardItem, s.result.png);
+      await copyPng(clipboard, ClipboardItem, bytes);
+      if (!s.result.saved) s.result.size = shotSize(s.result, bytes.length);
       s.result.copied = true;
     }
     s.state = 'done';
@@ -309,14 +337,34 @@ async function shotAction(mine, action) {
   const s = mine.shot;
   if (s.state === 'choose' && ['visible', 'full'].includes(action)) { shotChoice.area = action; return drawShot(mine); }
   if (s.state === 'choose' && s.compare && ['both', 'hostfile', 'live'].includes(action)) { shotChoice.panes = action; return drawShot(mine); }
+  if (s.state === 'choose' && action.startsWith('q-') && Object.hasOwn(SHOT_QUALITY, action.slice(2))) { shotChoice.quality = action.slice(2); return drawShot(mine); }
   if (s.state === 'busy' && action === 'cancel') { s.run++; return; }
   if (action === 'folder' && s.result?.file) { shell.showItemInFolder(s.result.file); return; }
   if (action === 'again' && s.state !== 'busy') { await probeShot(mine); return drawShot(mine); }
   if (['choose', 'done'].includes(s.state) && ['download', 'copy'].includes(action)) return shotDeliver(mine, action);
 }
+// Zoom: one size per tab, on every pane of it. In Compare that is the Hostfile and the Live pane, which sit in two sessions,
+// so each view is set on its own. Views zoom in isolation (bindTab): another tab of the same site keeps its own size, and
+// navigation keeps it; did-navigate sets it again for a view that was not live yet when the size was chosen.
+const zoomPanes = () => { const pair = visibleComparison(); return (pair ? [pair.host, pair.live] : [activeId]).map(id => tabs.get(id)).filter(Boolean); };
+function applyZoom(tab) { const wc = tab.view.webContents; if (!wc.isDestroyed() && Math.abs(wc.getZoomFactor() - tab.zoom) > 0.001) wc.setZoomFactor(tab.zoom); }
+const zoomView = () => ({ percent: Math.round((current()?.zoom || 1) * 100), label: zoomLabel(current()?.zoom), compare: Boolean(visibleComparison()), mac: process.platform === 'darwin' });
+function setZoom(factor) {
+  for (const t of zoomPanes()) { t.zoom = factor; applyZoom(t); }
+  emit();
+  const mine = card; // an open zoom card follows the keys and its own buttons
+  if (mine?.kind === 'zoom') renderCard(zoomView()).then(height => { if (card === mine) placeCard(height); }, () => {});
+}
+// in, out, reset (menu, keys, card) and set with a percent from the card's steps.
+function zoomAction(action, percent) {
+  if (!current()) return;
+  if (action === 'in' || action === 'out') setZoom(zoomStep(current().zoom, action === 'in' ? 1 : -1));
+  else if (action === 'reset') setZoom(1);
+  else if (action === 'set' && zoomPreset(percent)) setZoom(zoomPreset(percent));
+}
 async function openCard(kind, id, anchor) {
   if (card) { const same = card.kind === kind && card.id === id; closeCard(); if (same) return; }
-  if (!['cert', 'site', 'memory', 'dns', 'cache', 'cache-menu', 'tools', 'about', 'shot'].includes(kind)) return;
+  if (!['cert', 'site', 'memory', 'dns', 'cache', 'cache-menu', 'tools', 'about', 'shot', 'addon', 'zoom'].includes(kind)) return;
   const data = cardData(kind, id); if (!data) return;
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
   const wc = view.webContents, mine = card = { view, kind, id, anchor };
@@ -324,10 +372,11 @@ async function openCard(kind, id, anchor) {
   // The card has no bridge to the app. Its actions are links to a reserved, never loaded address that is handled here.
   wc.on('will-navigate', (event, url) => {
     event.preventDefault();
-    const [, action, target] = url.match(/^https:\/\/card\.invalid\/(activate|reload|refresh|hard-reload|clear-cache|clear-site-data|devtools|dock-bottom|dock-left|dock-right|site|cert|maker-website|maker-github|maker-coffee|shot-(?:visible|full|both|hostfile|live|download|copy|cancel|folder|again))\/(\d+)$/) || [];
+    const [, action, target] = url.match(/^https:\/\/card\.invalid\/(activate|reload|refresh|hard-reload|clear-cache|clear-site-data|devtools|dock-bottom|dock-left|dock-right|site|cert|maker-website|maker-github|maker-coffee|shot-(?:visible|full|both|hostfile|live|q-original|q-sharp|q-small|download|copy|cancel|folder|again)|zoom-(?:in|out|reset|set))\/(\d+)$/) || [];
     if (action === 'refresh') { if (card === mine && kind === 'dns') showDns(mine).catch(error => console.error('DNS card:', error.message)); return; }
     if (card !== mine || !action) return;
     if (action.startsWith('shot-') && kind === 'shot') { shotAction(mine, action.slice(5)); return; }
+    if (action.startsWith('zoom-') && kind === 'zoom') { zoomAction(action.slice(5), Number(target)); return; }
     const tab = tabs.get(Number(target)) || (target === '0' ? current() : null);
     if (['site','cert'].includes(action) && kind==='site') { closeCard(); openCard(action, Number(target), anchor); return; }
     if (['maker-website','maker-github','maker-coffee'].includes(action) && kind==='about') { closeCard(); newTab({'maker-website':'https://solutionmax.net/','maker-github':'https://github.com/Solutionmax/dioptra','maker-coffee':'https://buymeacoffee.com/solutionmax'}[action]); return; }
@@ -371,7 +420,7 @@ function persist() {
   if (serialized !== lastSavedSettings) { saveSettings(settingsFile, config); lastSavedSettings = serialized; }
 }
 function state() {
-  return { privateBeta, onboarding: { open: onboardingOpen, step: config.onboardingStep, url: config.onboardingURL }, view: visibleComparison() ? 'compare' : viewMode, routeBarHeight: visibleComparison() ? 0 : ROUTE_BAR_HEIGHT, differences: viewMode === 'differences' ? differences : { ...differences, report: null }, files: viewMode === 'differences' ? differencesFiles() : null, speed: viewMode === 'differences' ? forPage(speed, { progress: meter?.progress() || null }) : null, checks: viewMode === 'differences' ? forPage(checks) : null, performance, comparison: visibleComparison(), paneLayout, find: findState, sslVerification: config.sslVerification, activeSSL, sslPolicyVersion: config.sslPolicyVersion, sslMigration: config.sslMigration, library: library?.snapshot() || {bookmarks:[],history:[],downloads:[]}, downloads: [...downloadItems.values()].map(d=>d.record), tabs: [...tabs.values()].map(t => ({ mode: t.mode, route: route(t), site: t.site || null, connection: t.connection, id: t.id, title: t.title, url: t.url, startPage: t.startPage, loading: t.loading, devtools: Boolean(t.toolsOpen), error: t.error, certBlocked: t.error && t.certBlocked ? { host: t.certBlocked.host, error: t.certBlocked.error, subject: t.certBlocked.subject } : null, files: t.mode === 'auth' ? null : paneSummary(t.files, otherRecord(t)), noindex: noindexOf(t), back: t.ruleHistoryIndex !== undefined ? t.ruleHistoryIndex > 0 : t.view.webContents.navigationHistory.canGoBack(), forward: t.ruleHistoryIndex !== undefined ? t.ruleHistoryIndex < t.view.webContents.navigationHistory.length() - 1 : t.view.webContents.navigationHistory.canGoForward() })), activeId, rules: config.rules, activeRules, servers: config.servers, pending: pending(), panel, platform: process.platform, versions: { app: app.getVersion(), electron: process.versions.electron, chromium: process.versions.chrome }, updateFeed: updateFeed(), autoUpdates: config.autoUpdates, update: updateState, devtoolsDock: config.devtoolsDock, devtoolsRatio: config.devtoolsRatio, compareRatio: config.compareRatio, toolsLayout, draggingTools, claude: { ...claudeState, autoCheck: config.claudeAutoCheck, update: claudeUpdates?.state || {status:'idle', version:'', message:'Not checked yet.'} } };
+  return { privateBeta, onboarding: { open: onboardingOpen, step: config.onboardingStep, url: config.onboardingURL }, view: visibleComparison() ? 'compare' : viewMode, routeBarHeight: visibleComparison() ? 0 : ROUTE_BAR_HEIGHT, differences: viewMode === 'differences' ? differences : { ...differences, report: null }, files: viewMode === 'differences' ? differencesFiles() : null, speed: viewMode === 'differences' ? forPage(speed, { progress: meter?.progress() || null }) : null, checks: viewMode === 'differences' ? forPage(checks) : null, addons: addons?.snapshot() || { installed: [], pending: null }, addonTabs: viewMode === 'differences' ? addonTabs() : [], site: viewMode === 'differences' ? siteView() : null, performance, comparison: visibleComparison(), paneLayout, find: findState, sslVerification: config.sslVerification, activeSSL, sslPolicyVersion: config.sslPolicyVersion, sslMigration: config.sslMigration, library: library?.snapshot() || {bookmarks:[],history:[],downloads:[]}, downloads: [...downloadItems.values()].map(d=>d.record), tabs: [...tabs.values()].map(t => ({ mode: t.mode, route: route(t), site: t.site || null, connection: t.connection, id: t.id, title: t.title, url: t.url, startPage: t.startPage, loading: t.loading, devtools: Boolean(t.toolsOpen), zoom: t.zoom, error: t.error, certBlocked: t.error && t.certBlocked ? { host: t.certBlocked.host, error: t.certBlocked.error, subject: t.certBlocked.subject } : null, files: t.mode === 'auth' ? null : paneSummary(t.files, otherRecord(t)), noindex: noindexOf(t), chips: addonChips(t), back: t.ruleHistoryIndex !== undefined ? t.ruleHistoryIndex > 0 : t.view.webContents.navigationHistory.canGoBack(), forward: t.ruleHistoryIndex !== undefined ? t.ruleHistoryIndex < t.view.webContents.navigationHistory.length() - 1 : t.view.webContents.navigationHistory.canGoForward() })), activeId, rules: config.rules, activeRules, servers: config.servers, pending: pending(), panel, platform: process.platform, versions: { app: app.getVersion(), electron: process.versions.electron, chromium: process.versions.chrome }, updateFeed: updateFeed(), autoUpdates: config.autoUpdates, update: updateState, devtoolsDock: config.devtoolsDock, devtoolsRatio: config.devtoolsRatio, compareRatio: config.compareRatio, toolsLayout, draggingTools, claude: { ...claudeState, autoCheck: config.claudeAutoCheck, update: claudeUpdates?.state || {status:'idle', version:'', message:'Not checked yet.'} } };
 }
 function emit() {
   // Tab views are destroyed while quitting; state() must not touch them then.
@@ -478,12 +527,15 @@ function handleShortcut(event,input,tab=current()) {
     if (mod && key === 'd') { event.preventDefault(); bookmarkCurrent(); }
     if (input.key === 'Escape' && findState.open) {event.preventDefault();closeFind();layout();emit();}
     if (mod && key === 'w') { event.preventDefault(); closeTab(tab.id); }
+    // Zoom like Chrome: + (or =), − and 0. Here too, because a page view that has the focus does not always pass them to the menu.
+    if (mod && !input.alt && ['+', '=', '-', '0'].includes(input.key)) { event.preventDefault(); zoomAction(input.key === '-' ? 'out' : input.key === '0' ? 'reset' : 'in'); }
     if (input.key === 'F12') { event.preventDefault(); toggleDevTools(tab); }
 }
 function bindTab(view, initial = 'about:blank', load = true, foreground = true) {
-  const tab = { mode: view.webContents.session === liveSession ? 'live' : view.webContents.session === claudeAuthSession ? 'auth' : 'hostfile', connection: null, requestHosts: new Set(), files: createRecord(), id: nextId++, view, url: initial, startPage: load && initial === 'about:blank', title: 'New tab', loading: false, error: '' };
+  const tab = { mode: view.webContents.session === liveSession ? 'live' : view.webContents.session === claudeAuthSession ? 'auth' : 'hostfile', connection: null, requestHosts: new Set(), files: createRecord(), id: nextId++, view, url: initial, startPage: load && initial === 'about:blank', title: 'New tab', loading: false, error: '', zoom: 1 };
   tabs.set(tab.id, tab); win.contentView.addChildView(view);
   const wc = view.webContents;
+  wc.setZoomMode('isolated'); // zoom per tab, not per site (see setZoom)
   claude?.bind(tab);
   watchFiles(wc, tab);
   wc.on('certificate-error', (event, url, error, certificate, callback, isMainFrame) => {
@@ -504,15 +556,15 @@ function bindTab(view, initial = 'about:blank', load = true, foreground = true) 
   wc.on('found-in-page', (_event,result) => { if (tab.id === activeId && findState.open) { findState.matches=result.matches; findState.active=result.activeMatchOrdinal; emit(); } });
   wc.on('page-title-updated', (_event, title) => { tab.title = title || 'New tab'; emit(); });
   wc.on('did-start-loading', () => { tab.loading = true; emit(); });
-  wc.on('did-stop-loading', () => { tab.loading = false; if (!tab.reloadingRules && !tab.error && allowed(wc.getURL())) { tab.url = wc.getURL(); if(tab.mode !== 'auth') library.visit(tab.url, wc.getTitle()); persist(); inspectSite(tab); } emit(); });
+  wc.on('did-stop-loading', () => { tab.loading = false; if (!tab.reloadingRules && !tab.error && allowed(wc.getURL())) { tab.url = wc.getURL(); if(tab.mode !== 'auth') library.visit(tab.url, wc.getTitle()); persist(); inspectSite(tab); scanTab(tab); } emit(); });
   wc.on('did-start-navigation', (_event, url, inPlace, isMainFrame) => {
     if (!isMainFrame || inPlace) return;
     // A new document: what failed belongs to the page that is now loading. Reload both keeps Differences open.
     const keepView = tab.keepView; tab.keepView = false; tab.files = createRecord(); filesChanged();
-    if (!tab.reloadingRules) { if (tab.id === activeId && !keepView) viewMode = 'single'; tab.requestHosts.clear(); tab.certBlocked = null; try { certificates.delete(certKey(tab.mode, new URL(url).hostname)); } catch {} tab.navStart = Date.now(); tab.connection = null; tab.site = null; tab.siteHeaders = {}; tab.robots = null; tab.url = url; if (url !== 'about:blank') tab.startPage = false; tab.error = ''; layout(); emit(); }
+    if (!tab.reloadingRules) { if (tab.id === activeId && !keepView) viewMode = 'single'; tab.requestHosts.clear(); tab.certBlocked = null; try { certificates.delete(certKey(tab.mode, new URL(url).hostname)); } catch {} tab.navStart = Date.now(); tab.connection = null; tab.site = null; tab.siteHeaders = {}; tab.robots = null; tab.url = url; leaveSite(tab, url); if (url !== 'about:blank') tab.startPage = false; tab.error = ''; layout(); emit(); }
   });
   const navigated = (_event, url) => { if (tab.reloadingRules) return; tab.url = url; tab.error = ''; persist(); layout(); emit(); };
-  wc.on('did-navigate', navigated);
+  wc.on('did-navigate', navigated); wc.on('did-navigate', () => applyZoom(tab));
   wc.on('did-redirect-navigation', (_event,url,_inPlace,isMainFrame) => {if(isMainFrame && !tab.reloadingRules){tab.url=url;tab.connection=null;emit();}});
   wc.on('did-navigate-in-page', (event, url, main) => { if (main) navigated(event, url); });
   for (const name of ['will-navigate', 'will-redirect']) wc.on(name, (event, url) => { if (!allowed(url)) { event.preventDefault(); failure(tab, 'Unsupported address type. Use http or https.'); } });
@@ -559,6 +611,7 @@ function newTab(url = 'about:blank', foreground = true, mode = 'hostfile') {
 }
 function closeTab(id) {
   const tab = tabs.get(id); if (!tab) return;
+  leaveSite(tab, '');
   if (tab.mode !== 'auth' && /^https?:/.test(tab.url)) { closedTabs.push({url:tab.url,mode:tab.mode}); if(closedTabs.length>25) closedTabs.shift(); }
   if (comparison && [comparison.host, comparison.live].includes(id)) { keepPeer(comparison); comparison = null; }
   if (authRequest?.webContentsId === tab.view.webContents.id) finishAuth(null);
@@ -667,7 +720,33 @@ async function setView(mode) {
 // trusts only a certificate the user chose Continue anyway for.
 const hostfileRoute = host => ({ ip: activeHosts.find(r => r.enabled && r.domain === host)?.ip, skipSSL: skipCertificate(host) });
 const liveRoute = host => (liveExceptions.has(host) ? { pin: liveExceptions.get(host) } : null);
-function runDifferences() {
+// One page of one server. Redirects are followed by hand and only within the site (redirectStep in site-scope.cjs): a
+// server decides where its Location points, and another host is never asked on its word. The answer then carries
+// left = { host, own }, and the caller says what happened. get(target) asks one address without following.
+const SITE_HOPS = 5;
+async function followSite(get, url, ruled) {
+  const redirects = []; let target = url, doc, ms = 0;
+  for (;;) {
+    doc = await get(target); ms += doc.ms || 0;
+    if (!doc.ok || !doc.to) break;
+    const step = redirectStep(target, doc.to, ruled);
+    if (step.left) { doc = { ...doc, left: step.left }; break; }
+    if (redirects.length >= SITE_HOPS || step.follow === target) break;
+    redirects.push({ status: doc.status, location: step.follow }); target = step.follow;
+  }
+  return { ...doc, ms, finalUrl: target, redirects };
+}
+const ruledName = name => Boolean(hostfileRoute(name).ip);
+const hostfilePage = url => followSite(target => fetchDocument(webSession, target, { redirects: 0, resolveRoute: hostfileRoute }), url, ruledName);
+const livePage = url => followSite(target => fetchDocument(liveSession, target, { redirects: 0, resolveRoute: liveRoute }), url);
+// A redirect that was not followed, as findings of a single comparison.
+function leftAsFindings(hostfile, live) {
+  const { both, findings } = leftFindings(hostfile.left, live.left);
+  if (both) return [{ severity: 'info', text: `Both servers send this page to ${both.host}. Not followed: open that address to compare it.` }];
+  return findings.map(f => ({ severity: f.state === 'fix' ? 'high' : 'medium', text: `${f.text}.` }));
+}
+// fresh: the user clicked Compare again, so the add-ons are told to ask again instead of using what they remember.
+function runDifferences(fresh = false) {
   const { tab } = ruledTab('compare'), url = tab.url;
   if (diffRun?.url === url) return diffRun.promise;
   const mine = { url };
@@ -675,13 +754,14 @@ function runDifferences() {
   mine.promise = (async () => {
     try {
       await ensureLive();
-      const [hostfile, live] = await Promise.all([fetchDocument(webSession, url, { resolveRoute: hostfileRoute }), fetchDocument(liveSession, url, { resolveRoute: liveRoute })]);
+      const [hostfile, live] = await Promise.all([hostfilePage(url), livePage(url)]);
       const report = buildReport({ url, hostfile, live });
+      report.findings.unshift(...leftAsFindings(hostfile, live));
       // The new server answers and Live cannot be reached: say why, and judge the new server on its own.
       const reason = hostfile.ok ? await reasonFor(url, live) : null;
       if (reason) report.findings = soloFindings(report.findings, reason);
       report.counts.findings = report.findings.length;
-      if (diffRun === mine) { differences = { status: 'done', report, error: '', liveReason: reason, liveRetry: false }; afterDifferences(url, hostfile, live); }
+      if (diffRun === mine) { differences = { status: 'done', report, error: '', liveReason: reason, liveRetry: false }; afterDifferences(url, hostfile, live, fresh); }
       return report;
     } catch (error) { if (diffRun === mine) differences = { status: 'error', report: null, error: error.message, liveReason: null, liveRetry: false }; throw error; }
     finally { if (diffRun === mine) diffRun = null; emit(); }
@@ -710,7 +790,7 @@ function retryLive() {
   mine.promise = (async () => {
     try {
       await ensureLive();
-      const live = await fetchDocument(liveSession, url, { resolveRoute: liveRoute });
+      const live = await livePage(url);
       if (liveRetry !== mine || differences.report !== known) return null;
       const reason = await reasonFor(url, live);
       if (liveRetry !== mine || differences.report !== known) return null;
@@ -734,15 +814,16 @@ function forPage(run, extra = {}) {
   return tab && run.url && sameDocument(run.url, tab.url) ? { ...run, ...extra } : { status: 'idle', url: '', report: null, error: '' };
 }
 function resetPageChecks() {
-  speedRun = null; checksRun = null; meter?.cancel();
+  speedRun = null; checksRun = null; meter?.cancel(); addonRun = null; addonRuns = { url: '', results: byAddon() };
   speed = { status: 'idle', url: '', report: null, error: '' }; checks = { status: 'idle', url: '', report: null, error: '' };
 }
 // After a comparison: first the checks (a few small requests), then the speed loads, so the checks do not slow down
 // the servers while they are measured.
-function afterDifferences(url, hostfile, live) {
+function afterDifferences(url, hostfile, live, fresh = false) {
   resetPageChecks();
   const mine = checksRun = { url }, solo = liveUnreachable(url);
-  checks = { status: 'running', url, report: null, error: '' }; speed = { status: 'waiting', url, report: null, error: '' }; emit();
+  checks = { status: 'running', url, report: null, error: '' }; speed = { status: 'waiting', url, report: null, error: '' };
+  scanDifferences(url, hostfile, solo ? { ok: false } : live, fresh); emit();
   (solo ? runSoloChecks(url, hostfile) : runChecks(url, hostfile, live)).then(report => { if (checksRun === mine) checks = { status: 'done', url, report, error: '' }; },
     error => { if (checksRun === mine) checks = { status: 'error', url, report: null, error: String(error.message || error).slice(0, 300) }; })
     .finally(() => { if (checksRun !== mine) return; checksRun = null; emit(); measureSpeed(url); });
@@ -763,21 +844,23 @@ function copiesOf(host) {
 // Each card gets an id: a Copy button names its card and main copies its own text, never text from the window.
 function cardIds(report) { report.groups.forEach(g => g.items.forEach((c, i) => { c.id = `${g.id}-${i}`; })); return report; }
 // Live cannot be reached: the same bounded requests, to the new server only (www to bare waits for Live).
-async function runSoloChecks(url, hostfile) {
+// get(side, target, options): how a whole-site run asks, so its requests are counted; a single page asks directly.
+async function runSoloChecks(url, hostfile, get = null) {
   if (!hostfile.ok) throw new Error('The page could not be fetched from the new server, so the checks did not run.');
-  const ask = target => fetchDocument(webSession, target, { redirects: 0, maxBody: CHECK_BODY, timeout: CHECK_TIMEOUT_MS, resolveRoute: hostfileRoute });
+  const bounded = { redirects: 0, maxBody: CHECK_BODY, timeout: CHECK_TIMEOUT_MS };
+  const ask = target => (get ? get('hostfile', target, bounded) : fetchDocument(webSession, target, { ...bounded, resolveRoute: hostfileRoute }));
   const page = new URL(url), robots = await ask(`${page.origin}/robots.txt`), wordpress = pageFacts(hostfile.body, url).wordpress;
   // The sitemap address comes from the robots.txt of the new server.
   const list = standardAddresses({ pageURL: url, hostfileHTML: hostfile.body, wordpress, robotsLive: robots.body, routed: host => activeHosts.some(r => r.enabled && r.domain === host), random: randomUUID().slice(0, 8) });
   const answers = new Map(await inBatches(list.filter(c => c.id !== 'www'), async check => [check, check.id === 'robots' ? robots : await ask(check.url)]));
   return cardIds(soloChecksReport({ pageURL: url, hostfile, standard: list.map(check => ({ check, hostfile: answers.get(check) })), copies: copiesOf(page.hostname) }));
 }
-async function runChecks(url, hostfile, live) {
+async function runChecks(url, hostfile, live, get = null) {
   // Without the page of both servers every check would pass on an empty page.
   if (!hostfile.ok || !live.ok) throw new Error(`The page could not be fetched from ${!hostfile.ok ? 'the new server' : 'Live'}, so the checks did not run.`);
   await ensureLive();
   const options = { redirects: 0, maxBody: CHECK_BODY, timeout: CHECK_TIMEOUT_MS };
-  const ask = target => Promise.all([fetchDocument(webSession, target, { ...options, resolveRoute: hostfileRoute }), fetchDocument(liveSession, target, { ...options, resolveRoute: liveRoute })]);
+  const ask = target => (get ? Promise.all([get('hostfile', target, options), get('live', target, options)]) : Promise.all([fetchDocument(webSession, target, { ...options, resolveRoute: hostfileRoute }), fetchDocument(liveSession, target, { ...options, resolveRoute: liveRoute })]));
   const page = new URL(url), robots = await ask(`${page.origin}/robots.txt`);
   const wordpress = pageFacts(hostfile.body, url).wordpress || pageFacts(live.body, url).wordpress;
   const list = standardAddresses({ pageURL: url, hostfileHTML: hostfile.body, liveHTML: live.body, wordpress, robotsLive: robots[1].body, routed: host => activeHosts.some(r => r.enabled && r.domain === host), random: randomUUID().slice(0, 8) });
@@ -786,6 +869,264 @@ async function runChecks(url, hostfile, live) {
   // The old server's own name (reverse DNS), where a temporary URL such as /~user/ of the hosting account lives.
   const oldName = live.ip ? await Promise.race([reverseName(bareIP(live.ip)), new Promise(resolve => setTimeout(resolve, 2000, ''))]) : '';
   return cardIds(checksReport({ pageURL: url, hostfile, live, standard, oldIP: live.ip, oldHosts: [oldName].filter(Boolean), copies }));
+}
+/* Add-ons (1.4): signed extra tools from their own feed (addons.cjs). Their scans run where the checks run: after a
+   comparison (both servers), and after a page has loaded in a tab (the server that tab shows). */
+// Results are keyed by add-on id in objects without a prototype: an add-on may be called "constructor".
+const byAddon = (from = {}) => Object.assign(Object.create(null), from);
+let addons = null, addonRuns = { url: '', results: byAddon() }, addonRun = null;
+// How a scan reaches a server: the rule of the new server, Live through its own session, or a tab without a rule.
+const ADDON_ROUTES = { hostfile: () => ({ ses: webSession, resolveRoute: hostfileRoute }), live: () => ({ ses: liveSession, resolveRoute: liveRoute }), plain: () => ({ ses: webSession, resolveRoute: hostfileRoute }) };
+// An add-on gets at most 2 MB of a page: its scan runs in this process, and a huge page must not hold up the window.
+const ADDON_PAGE = 2 * 1024 * 1024, ADDON_AGAIN_MS = 60000;
+const addonPages = pages => Object.fromEntries(Object.entries(pages).map(([side, page]) => [side, { ...page, body: String(page.body || '').slice(0, ADDON_PAGE) }]));
+// Every request an add-on makes goes through one counter per site and at most four at a time per server (host-budget.cjs).
+// who: under whose name the requests are booked, with its limit (BROWSE, COMPARE or a whole-site run). limited: Dioptra refused a request, so the scan did not see everything.
+const budget = createBudget();
+// Test only, in an app that is not packaged: --scan-budget=<n> sets how many requests the scans after page loads may book.
+const scanBudgetArg = app.isPackaged ? '' : process.argv.find(v => v.startsWith('--scan-budget=')) || '';
+const SCAN = scanBudgetArg ? { kind: 'browse', limit: Math.min(BROWSE.limit, Math.max(0, Number(scanBudgetArg.slice(14)) || 0)) } : BROWSE;
+// rescan: the user asked for a fresh result (Compare again, a whole-site run); the add-on is told so.
+// alive: the whole-site run that asked is still going (its own check next to the one of the scan).
+async function runAddon(id, url, pages, via, who = COMPARE, rescan = false, alive = null) {
+  let limited = false;
+  const host = new URL(url).hostname;
+  const fetchPage = (side, target, headers, wanted) => { const r = ADDON_ROUTES[via[side]](); return budget.ask(host, side, who, () => fetchDocument(r.ses, target, { redirects: 0, maxBody: CHECK_BODY, timeout: CHECK_TIMEOUT_MS, headers, resolveRoute: r.resolveRoute }), () => (!wanted || wanted()) && (!alive || alive())).catch(error => { if (error instanceof BudgetError) limited = true; throw error; }); };
+  try { const report = await addons.scan(id, { url, pages: addonPages(pages), fetchPage, rescan }); return { status: 'done', report, error: '', at: Date.now(), limited }; }
+  catch (error) { if (!(error instanceof BudgetError) && !(error instanceof StoppedError)) console.error(`Add-on ${id}:`, error?.message || error); return { status: 'error', report: null, error: String(error?.message || error).slice(0, 300), limited }; }
+}
+function scanDifferences(url, hostfile, live, fresh = false) {
+  const list = addons?.active() || [], pages = {};
+  addonRun = null; addonRuns = { url, results: byAddon() };
+  if (!list.length) return;
+  if (hostfile.ok) pages.hostfile = hostfile;
+  if (live.ok) pages.live = live;
+  const none = !Object.keys(pages).length, mine = addonRun = { url };
+  for (const a of list) addonRuns.results[a.id] = none ? { status: 'error', report: null, error: 'The page could not be fetched, so the scan did not run.' } : { status: 'running', report: null, error: '' };
+  if (none) return;
+  for (const a of list) runAddon(a.id, url, pages, { hostfile: 'hostfile', live: 'live' }, COMPARE, fresh).then(result => { if (addonRun !== mine) return; addonRuns = { url, results: byAddon({ ...addonRuns.results, [a.id]: result }) }; emit(); });
+}
+// A page has loaded: scan it on the server this tab shows. Sign-in pages and account services are left alone.
+function scanTab(tab) {
+  const list = addons?.active() || [];
+  // The scan of this very page is still running (a slow server): no second one next to it.
+  if (tab.addonScanned?.url === tab.url && tab.addonScanned.scan.pending) { tab.addonScan = tab.addonScanned.scan; return; }
+  tab.addonScan = null;
+  let host = '', query = ''; try { const u = new URL(tab.url); host = u.hostname.replace(/\.$/, ''); query = u.search; } catch {}
+  if (!list.length || tab.mode === 'auth' || tab.startPage || !/^https?:/.test(tab.url) || !host || protectedHost(host)) return;
+  // A scan asks for the page again. Not for addresses that may work only once or do something (a sign-in callback, a
+  // reset or unsubscribe link: anything with a query), not for devices and services on this computer or the LAN unless
+  // there is a domain rule for them, and not twice within a minute (a page that reloads itself).
+  const ruledHost = activeHosts.some(r => r.enabled && r.domain === host);
+  if (query || (!ruledHost && (host === 'localhost' || /^[\d.]+$/.test(host) || host.startsWith('[') || !host.includes('.') || /\.(local|lan|internal|home|localhost)$/.test(host)))) return;
+  if (tab.addonScanned?.url === tab.url && Date.now() - tab.addonScanned.at < ADDON_AGAIN_MS) { tab.addonScan = tab.addonScanned.scan; return; }
+  const url = tab.url, mine = tab.addonScan = { url, results: byAddon(), pending: true };
+  tab.addonScanned = { url, at: Date.now(), scan: mine };
+  const ruled = tab.mode === 'hostfile' && Boolean(route(tab).configured), kind = ruled ? 'hostfile' : tab.mode === 'live' ? 'live' : 'plain', side = ruled ? 'hostfile' : 'live';
+  (async () => {
+    if (kind === 'live') await ensureLive();
+    // The page is asked once more for the scan: that request counts too. Browsing gets the small limit.
+    // Redirects only within the site, and every hop counts.
+    const r = ADDON_ROUTES[kind](), page = await followSite(target => budget.ask(host, side, SCAN, () => fetchDocument(r.ses, target, { redirects: 0, resolveRoute: r.resolveRoute })), url, kind === 'hostfile' ? ruledName : undefined);
+    if (tab.addonScan !== mine || !page.ok) return;
+    // The page is somewhere else: that is said, and the other place is not scanned.
+    if (page.left) { for (const a of list) mine.results[a.id] = { status: 'error', report: null, error: `This page redirects to ${page.left.host}, so it was not scanned.` }; emit(); return; }
+    await Promise.all(list.map(async a => { const result = await runAddon(a.id, url, { [side]: page }, { [side]: kind }, SCAN); if (tab.addonScan === mine) { mine.results[a.id] = result; emit(); } }));
+  })().catch(error => {
+    // Dioptra refused to ask the page again for the scan: every add-on says so on this tab, none reads as clean.
+    if (error instanceof BudgetError) { for (const a of list) mine.results[a.id] = { status: 'error', report: null, error: error.message, limited: true, at: Date.now() }; if (tab.addonScan === mine) emit(); }
+    else console.error('Add-on scan:', error?.message || error);
+  }).finally(() => {
+    mine.pending = false;
+    // The add-ons changed while this scan ran: scan once more now, not next to it.
+    if (tab.addonAgain) { tab.addonAgain = false; tab.addonScanned = null; if (tabs.has(tab.id)) scanTab(tab); }
+  });
+}
+// Installed, removed or switched: every open page is scanned again; Differences scans with its next comparison.
+// A tab whose scan is still running is scanned again when that one is done, not at the same time.
+function rescanTabs() { addonRun = null; addonRuns = { url: '', results: byAddon() }; for (const tab of tabs.values()) { if (tab.addonScanned?.scan.pending) { tab.addonAgain = true; continue; } tab.addonScanned = null; scanTab(tab); } }
+// The result for a tab: the scan of the tab itself or the comparison of both servers for this page, whichever is newer
+// (the page may have been loaded again since the comparison).
+function addonResult(tab, id) {
+  const both = tab.mode === 'hostfile' && addonRuns.url && sameDocument(addonRuns.url, tab.url) ? addonRuns.results[id] : null;
+  const own = tab.addonScan && sameDocument(tab.addonScan.url, tab.url) ? tab.addonScan.results[id] : null;
+  const done = [both, own].filter(r => r?.status === 'done');
+  // No finished scan: one that Dioptra cut short still counts, so the tab does not read as clean.
+  return done.sort((a, b) => b.at - a.at)[0] || [both, own].find(r => r?.limited) || null;
+}
+const LIMITED_NOTE = 'Dioptra stopped asking this site: too many requests went to it in a short time. The scan did not see everything; it runs again in a few minutes.';
+// The red label next to the server name. It opens the add-on's tab in Differences when this tab has a rule, else a card.
+function addonChips(tab) {
+  if (tab.mode === 'auth' || tab.startPage) return [];
+  // A scan that was cut short and found nothing gets an orange "Limited" label: no label would read as clean.
+  return (addons?.active() || []).map(a => ({ a, result: addonResult(tab, a.id) })).filter(x => x.result?.report?.label || x.result?.limited).map(({ a, result: { report, limited } }) => ({
+    id: a.id, text: report?.label || 'Limited', tone: report?.label ? report.tone : 'warn', differences: tab.mode === 'hostfile' && Boolean(route(tab).configured),
+    title: report?.label ? `${a.name} found ${report.counts.problems} ${report.tone === 'warn' ? 'problem' : 'threat'}${report.counts.problems === 1 ? '' : 's'} on this page.${limited ? ' The scan was cut short.' : ''}` : `${a.name} could not finish its scan of this page.` }));
+}
+function addonTabs() {
+  const tab = current();
+  return (addons?.active() || []).map(a => ({ id: a.id, name: a.name, by: a.by, scope: a.scope, label: a.tab.label, sub: a.tab.sub, ...(tab && addonRuns.url && sameDocument(addonRuns.url, tab.url) && addonRuns.results[a.id] || { status: 'idle', report: null, error: '' }) }));
+}
+function addonCard(tab) {
+  return { items: (addons?.active() || []).map(a => ({ name: a.name, result: addonResult(tab, a.id) })).filter(x => x.result?.report || x.result?.limited).map(({ name, result: { report, limited } }) => ({
+    name, summary: report ? `${limited ? 'Limited · ' : ''}${report.summary.map(s => s.text).join(' · ')}` : 'Limited · not scanned',
+    lines: report ? report.groups.flatMap(g => g.items.map(item => ({ label: g.label, text: item.title, value: item.values[report.sides[0]] || '', threat: item.tone === 'worse' }))) : [],
+    note: [limited ? LIMITED_NOTE : '', report?.note || ''].filter(Boolean).join(' ') })) };
+}
+/* Whole site (1.4.0-beta.4): the same comparison for a list of pages of the site, two pages at a time, and what they
+   say together (site-scope.cjs). Per page: both documents (status, redirects, headers, HTML, external domains), the
+   checks that are about the page, every page-scope add-on. Once, on the home page: the site-wide checks and the
+   site-scope add-ons. Not per page: Speed and Files, which need a real page load. Every request goes through the
+   counter and the lanes of host-budget.cjs. The result lives in memory with its tab until the tab leaves the site. */
+const SITE_PAGES_AT_ONCE = 2;
+// Test only, in an app that is not packaged: --site-budget=<n> makes a whole-site run reach its request limit early.
+const testSiteBudget = app.isPackaged ? 0 : Number((process.argv.find(v => v.startsWith('--site-budget=')) || '').slice(14)) || 0;
+function siteView() {
+  const tab = current(), run = tab?.whole;
+  let host = ''; try { host = bareHost(new URL(tab.url).hostname); } catch {}
+  return run && run.host === host ? { ...run.view, running: run.running, choices: PAGE_CHOICES, max: MAX_PAGES } : null;
+}
+function leaveSite(tab, url) {
+  const run = tab.whole; if (!run) return;
+  let host = ''; try { host = bareHost(new URL(url).hostname); } catch {}
+  if (host !== run.host) { run.cancelled = true; tab.whole = null; }
+}
+// The page list: the sitemap named in robots.txt, else the usual addresses; first on the new server, then on Live.
+// Redirects are not followed and only addresses of the site itself are asked. alive: the run was not cancelled.
+// empty: a sitemap that answered but named no address at all.
+async function siteList(ask, home, alive) {
+  const bounded = { redirects: 0, maxBody: SITEMAP_BODY, timeout: CHECK_TIMEOUT_MS };
+  let empty = '';
+  for (const side of ['hostfile', 'live']) {
+    if (!alive()) return null;
+    const robots = await ask(side, new URL('/robots.txt', home).href, { ...bounded, maxBody: CHECK_BODY });
+    const named = robots.ok && robots.status === 200 ? sitemapsInRobots(robots.body).map(value => pageOf(value, home)).filter(Boolean) : [];
+    for (const address of [...new Set([...named, ...SITEMAP_PATHS.map(p => new URL(p, home).href)])]) {
+      if (!alive()) return null;
+      const doc = await ask(side, address, bounded);
+      if (!doc.ok || doc.status !== 200) continue;
+      const first = parseSitemap(doc.body), name = new URL(address).pathname.slice(1);
+      let urls = first.urls, capped = first.capped;
+      if (first.index) {
+        urls = [];
+        for (const child of first.urls.map(value => pageOf(value, home)).filter(Boolean).slice(0, SITEMAP_CHILDREN)) {
+          if (!alive()) return null;
+          const part = await ask(side, child, bounded);
+          if (part.ok && part.status === 200) { const read = parseSitemap(part.body); urls.push(...read.urls); capped = capped || read.capped; }
+        }
+      }
+      if (urls.length) return { name, urls, capped };
+      empty ||= name;
+    }
+  }
+  return empty ? { name: empty, urls: [], capped: false } : null;
+}
+// Starts a run, or says why it cannot start (no rule for the site any more): the window shows that message.
+function startSite(options) {
+  const { tab } = ruledTab('compare');
+  runSite(tab, options).catch(error => console.error('Whole site:', error?.message || error));
+}
+async function runSite(tab, options) {
+  const home = new URL('/', tab.url).href, host = new URL(home).hostname;
+  const again = options.again && tab.whole ? tab.whole.options : null;
+  const wanted = again || { limit: PAGE_CHOICES.includes(Number(options.limit)) ? Number(options.limit) : DEFAULT_PAGES, list: typeof options.list === 'string' ? options.list.slice(0, 40000) : '' };
+  if (tab.whole) tab.whole.cancelled = true; // started twice: the new run takes the place of the old one
+  const run = tab.whole = { host: bareHost(host), options: wanted, running: true, cancelled: false, failed: false, models: [], onceChecks: [], skipped: [], solo: null, homeSkipped: false,
+    view: { status: 'listing', home, source: '', total: 0, done: 0, compared: 0, tookMs: 0, error: '', notes: [], parts: [], own: [], rest: [], solo: '', wanted: wanted.limit, homeSkipped: false } };
+  // alive: this run is still the one of its tab, was not cancelled and did not stop on an error. Checked before every
+  // request, also by a request that waited for its turn.
+  const alive = () => tab.whole === run && !run.cancelled && !run.failed && tabs.has(tab.id), show = more => { run.view = { ...run.view, ...more }; if (tab.whole === run) emit(); };
+  const started = Date.now();
+  const capOf = pages => (testSiteBudget > 0 ? { kind: 'site', limit: Math.min(testSiteBudget, forSite(pages).limit) } : forSite(pages));
+  let cap = capOf(wanted.limit);
+  const ask = (side, target, more = {}) => budget.ask(host, side, cap, () => fetchDocument(side === 'live' ? liveSession : webSession, target, { ...more, resolveRoute: side === 'live' ? liveRoute : hostfileRoute }), alive);
+  const fold = () => { const got = siteResult(run.models.filter(Boolean), { onceChecks: run.onceChecks }); return { ...got, compared: run.models.filter(Boolean).length }; };
+  // One page of one server. Redirects are followed by hand, and only to the site itself: the same host name (www or
+  // not), and on the new server only a name that has a domain rule. Another host is never asked: the answer then
+  // carries left = { host, own } (own: another host of the same site), and the caller says what happened.
+  const page = (side, url) => followSite(target => ask(side, target, { redirects: 0 }), url, side === 'hostfile' ? ruledName : undefined);
+  emit();
+  try {
+    await ensureLive();
+    let pages = [], source = '';
+    const notes = [];
+    if (wanted.list.trim()) {
+      const picked = pastedPages(wanted.list, home); pages = picked.pages; source = 'your list';
+      if (picked.refused) notes.push(`${picked.refused} left out, not an address of this site: ${picked.sample.join(', ')}${picked.refused > picked.sample.length ? ', …' : ''}`);
+      if (picked.more) notes.push(`More than ${MAX_PAGES} pages: the rest of the list was left out`);
+    } else {
+      const found = await siteList(ask, home, alive);
+      if (!alive()) return;
+      if (!found) return show({ status: 'nolist', error: 'No sitemap found on this site (robots.txt, /wp-sitemap.xml, /sitemap.xml, /sitemap_index.xml). Choose pages and paste your own list of addresses.' });
+      const picked = pickPages(found.urls, home, wanted.limit); pages = picked.pages; source = found.name;
+      if (pages.length < 2) return show({ status: 'nolist', source, error: `The sitemap ${found.name} names no page of this site that can be compared${picked.other ? ` (${picked.other} ${picked.other === 1 ? 'address is' : 'addresses are'} of another site or a file)` : ''}. Choose pages and paste your own list of addresses.` });
+      if (picked.more || found.capped) notes.push(`The sitemap lists more pages; these are the first ${pages.length}`);
+      if (picked.other) notes.push(`${picked.other} ${picked.other === 1 ? 'address' : 'addresses'} in the sitemap ${picked.other === 1 ? 'is' : 'are'} of another site or a file and ${picked.other === 1 ? 'was' : 'were'} left out`);
+    }
+    cap = capOf(pages.length);
+    show({ status: 'running', source, total: pages.length, notes });
+    const list = addons?.active() || [], copies = copiesOf(host);
+    const one = async (url, index) => {
+      const first = index === 0;
+      const [hostfile, live] = await Promise.all([page('hostfile', url), run.solo ? run.solo.live : page('live', url)]);
+      if (!alive()) return;
+      // Both servers send the page to the same other host: nothing of this site to compare, said in a note. Only one
+      // of them, or each to another host: that is a finding of this page (the new server alone is what a hijack looks like).
+      const { both, findings: extra } = leftFindings(hostfile.left, live.left);
+      if (both) { run.skipped.push({ path: new URL(url).pathname, host: both.host, own: both.own }); if (first) run.homeSkipped = true; return; }
+      const report = buildReport({ url, hostfile, live });
+      // Live cannot be reached for the home page: the rest of the run leaves Live alone and judges the new server on its own.
+      if (first) { const reason = hostfile.ok ? await reasonFor(url, live) : null; if (reason) { const { body: _body, ...rest } = live; run.solo = { reason, live: { ...rest, body: '' } }; } }
+      const reason = run.solo?.reason || null;
+      if (reason) report.findings = soloFindings(report.findings, reason);
+      let checksState = { status: 'error', report: null, error: 'The page could not be fetched, so the checks did not run.' };
+      try {
+        if (hostfile.ok && (reason || live.ok)) {
+          const own = cardIds(reason ? soloChecksReport({ pageURL: url, hostfile, standard: [], copies }) : checksReport({ pageURL: url, hostfile, live, standard: [], oldIP: live.ip, copies }));
+          let all = own;
+          if (first) { all = await (reason ? runSoloChecks(url, hostfile, ask) : runChecks(url, hostfile, live, ask)); const mine = new Set(own.groups.flatMap(g => g.items.map(i => i.title))); run.onceChecks = all.groups.flatMap(g => g.items.map(i => i.title)).filter(t => !mine.has(t)); }
+          checksState = { status: 'done', report: all, error: '' };
+        }
+      } catch (error) { if (error instanceof BudgetError) throw error; checksState = { status: 'error', report: null, error: String(error?.message || error).slice(0, 300) }; }
+      if (!alive()) return;
+      const sides = {}; if (hostfile.ok) sides.hostfile = hostfile; if (!reason && live.ok) sides.live = live;
+      const scanned = await Promise.all(list.filter(a => first || a.scope !== 'site').map(async a => ({ id: a.id, name: a.name, by: a.by, scope: a.scope, label: a.tab.label, sub: a.tab.sub,
+        ...(Object.keys(sides).length ? await runAddon(a.id, url, sides, { hostfile: 'hostfile', live: 'live' }, cap, true, alive) : { status: 'error', report: null, error: 'The page could not be fetched, so the scan did not run.' }) })));
+      if (!alive()) return;
+      const { body: _b1, ...h } = report.hostfile || {}, { body: _b2, ...l } = report.live || {};
+      run.models[index] = pageModel({ url, title: pageTitle(hostfile.body || live.body, hostfile.body ? hostfile.finalUrl || url : live.finalUrl || url), report: { ...report, hostfile: h, live: l }, liveReason: reason, checks: checksState, addonTabs: scanned, extra });
+    };
+    const step = async index => { await one(pages[index], index); if (alive()) show({ ...fold(), done: run.view.done + 1, solo: run.solo?.reason.text || '', homeSkipped: run.homeSkipped }); };
+    await step(0);
+    let next = 1;
+    // A worker that hits the request limit stops the other one too.
+    const worker = async () => { try { while (alive() && next < pages.length) await step(next++); } catch (error) { if (error instanceof StoppedError) return; run.failed = true; throw error; } };
+    await Promise.all(Array.from({ length: SITE_PAGES_AT_ONCE }, worker));
+  } catch (error) {
+    // A request that found the run cancelled when its turn came is no error of the run.
+    if (!(error instanceof StoppedError)) run.failed = true;
+    if (run.failed && tab.whole === run) run.view = { ...run.view, status: 'error', error: error instanceof BudgetError ? `Dioptra stopped after ${run.view.done} of ${run.view.total} pages: this run reached its limit of ${cap.limit} requests to the site in 10 minutes. Compare again in a few minutes.` : String(error?.message || error).slice(0, 300) };
+  } finally {
+    // Every way out ends in a final state: done, cancelled (also while the page list was still being fetched), or an error.
+    run.running = false;
+    if (tab.whole === run) {
+      const groups = new Map(); for (const s of run.skipped) groups.set(s.host, [...(groups.get(s.host) || []), s]);
+      const notes = [...run.view.notes, ...[...groups].map(([to, list]) => `${list.length} ${list.length === 1 ? 'page redirects' : 'pages redirect'} on both servers to ${to}${list[0].own ? ', another host of this site,' : ', another site,'} and ${list.length === 1 ? 'was' : 'were'} skipped: ${list.slice(0, 5).map(s => s.path).join(', ')}${list.length > 5 ? ', …' : ''}`)];
+      const status = ['error', 'nolist'].includes(run.view.status) ? run.view.status : run.cancelled ? 'cancelled' : 'done';
+      run.view = { ...run.view, ...(status === 'nolist' ? {} : fold()), status, notes, stopping: false, homeSkipped: run.homeSkipped, tookMs: Date.now() - started };
+      emit();
+    }
+  }
+}
+// A page from the list: the tab goes there and Differences compares it the normal way. The site result stays.
+function openSitePage(url) {
+  const { tab } = ruledTab('compare'), run = tab.whole;
+  const target = run && pageOf(url, run.view.home);
+  if (!target) throw new Error('That page is not part of this site.');
+  delete tab.ruleHistoryIndex; tab.keepView = true; tab.url = target; tab.error = '';
+  tab.view.webContents.loadURL(target).catch(error => { if (error.code !== 'ERR_ABORTED' && error.errno !== -3) failure(tab, error.message); });
+  persist(); layout(); emit();
+  runDifferences().catch(() => {});
 }
 function measureSpeed(url) {
   if (!meter || speedRun?.url === url) return;
@@ -833,6 +1174,8 @@ async function compare() {
   const live=newTab(ruled ? tab.url : 'about:blank',false,'live');
   // A comparison opened during a Claude conversation stays in its anchor group.
   live.claudeGroup=tab.claudeGroup;
+  // Both panes at the size of the tab.
+  live.zoom=tab.zoom; applyZoom(live);
   comparison={host:tab.id,live:live.id}; activeId=tab.id; panel=null; layout();emit();
   if (!ruled) win.webContents.focus();
   } finally { comparing=false; }
@@ -1088,11 +1431,11 @@ ipcMain.handle('browser', async (event, action, data) => {
         break;
       }
       case 'view': await setView(data); break;
-      case 'differences-run': return { ok: true, report: await runDifferences() };
+      case 'differences-run': return { ok: true, report: await runDifferences(true) };
       case 'live-retry': await retryLive(); break;
       case 'differences-ask-claude': {
         if (!differences.report) throw new Error('Run Differences first.');
-        clipboard.writeText(summaryText(differences.report, [...filesLines(differencesFiles()), ...checksLines(forPage(checks).report), ...speedLines(forPage(speed).report)]));
+        clipboard.writeText(summaryText(differences.report, [...filesLines(differencesFiles()), ...checksLines(forPage(checks).report), ...addonTabs().flatMap(a => addonLines(a.name, a.report)), ...speedLines(forPage(speed).report)]));
         // Same route as the toolbar button; the summary is only copied, never injected into the extension.
         if (claudeState.status === 'ready') { await openClaudePanel(); claude.clicked(current()); panel = 'claude'; layout(); emit(); }
         return { ok: true, notice: 'Summary copied. Paste it into Claude.' };
@@ -1107,6 +1450,26 @@ ipcMain.handle('browser', async (event, action, data) => {
         if (!text) throw new Error('Nothing to copy.');
         clipboard.writeText(text);
         return { ok: true, notice: one ? 'Command copied. Run it on the new server.' : found.group === 'old' ? 'Commands copied. Run them on the new server.' : 'Copied.' };
+      }
+      case 'addon-preview': if (!addons) throw new Error('Add-ons are not available.'); await addons.preview(data); break;
+      case 'addon-cancel': addons?.cancel(); break;
+      case 'addon-install': {
+        if (!addons) throw new Error('Add-ons are not available.');
+        // A failed install leaves no pending add-on: the window must hear that too.
+        const id = await addons.install().catch(error => { emit(); throw error; }), entry = addons.snapshot().installed.find(a => a.id === id);
+        rescanTabs(); emit();
+        return { ok: true, notice: entry.restart ? `${entry.name} ${entry.version} installed. Restart Dioptra to use the new version.` : `${entry.name} installed.` };
+      }
+      case 'addon-remove': await addons.remove(String(data)); rescanTabs(); break;
+      case 'addon-enable': await addons.setEnabled(String(data?.id), data?.on === true); rescanTabs(); break;
+      case 'addon-check': { const update = await addons.check(String(data)); if (update.status === 'updated') rescanTabs(); emit(); return { ok: true, notice: update.message }; }
+      case 'addon-copy': {
+        const found = addonTabs().find(a => a.id === data?.addon)?.report?.groups.flatMap(g => g.items).find(c => c.id === data?.card);
+        if (!found) throw new Error('Run the scan first.');
+        const one = Number.isInteger(data?.command), text = one ? found.commands[data.command]?.command : found.action?.text;
+        if (!text) throw new Error('Nothing to copy.');
+        clipboard.writeText(text);
+        return { ok: true, notice: one ? 'Command copied. Run it on the server.' : 'Copied.' };
       }
       case 'files-copy': {
         const view = differencesFiles();
@@ -1166,6 +1529,9 @@ ipcMain.handle('browser', async (event, action, data) => {
         await applyRules(validateRules(config.rules.map(rule => ({ ...rule, skipSSL: false })))); break;
       }
 
+      case 'site-run': startSite(data || {}); break;
+      case 'site-cancel': { const run = current()?.whole; if (run?.running) { run.cancelled = true; run.view = { ...run.view, stopping: true }; } break; }
+      case 'site-open': openSitePage(String(data || '')); break;
       case 'navigate': {
         const url = navigationURL(data); delete tab.ruleHistoryIndex; tab.url = url; tab.startPage = url === 'about:blank'; tab.error = ''; layout();
         if (!tab.reloadingRules) tab.view.webContents.loadURL(url).catch(error => { if (error.code !== 'ERR_ABORTED' && error.errno !== -3) failure(tab, error.message); });
@@ -1290,6 +1656,13 @@ else {
     app.setAboutPanelOptions({ applicationName: 'Dioptra', applicationVersion: app.getVersion(), copyright: 'Copyright © 2026 SolutionMAX', authors: ['SolutionMAX'], website: 'https://solutionmax.net', iconPath: path.join(__dirname, 'brand/dioptra.png') });
     webSession = session.fromPartition('persist:web');
     library = createLibrary(path.join(app.getPath('userData'), 'library.json'));
+    // Add-ons load before the first tab, so the first page is scanned too. A test build may name its own signing key
+    // and a feed on this computer; a packaged Dioptra only knows SolutionMAX's key and https.
+    try {
+      const testKey = app.isPackaged ? '' : (process.argv.find(v => v.startsWith('--addon-key=')) || '').slice(12);
+      addons = createAddons({ dir: path.join(app.getPath('userData'), 'addons'), appVersion: app.getVersion(), allowLocal: !app.isPackaged, log: message => console.error(message), ...(testKey ? { publicKey: testKey } : {}) });
+      await addons.loadAll();
+    } catch (error) { console.error('Add-ons could not be loaded:', error?.message || error); }
     certificatePolicy(webSession);
     observeConnections(webSession);
     routingProxy = await createLiveProxy({ resolve: host => activeHosts.find(r => r.enabled && r.domain === host)?.ip || host });
@@ -1332,7 +1705,7 @@ else {
       ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
       { label: 'File', submenu: [{ label: 'New tab', accelerator: 'CmdOrCtrl+T', click: () => { newTab(); focusAddress(); } }, { label: 'Reopen closed tab', accelerator: 'CmdOrCtrl+Shift+T', click: reopenTab }, { label: 'Close tab', accelerator: 'CmdOrCtrl+W', click: () => closeTab(activeId) }, { role: 'quit' }] },
       { label: 'Edit', submenu: [{label:'Find in page', accelerator:'CmdOrCtrl+F', click:openFind}, {label:'Bookmark page', accelerator:'CmdOrCtrl+D', click:bookmarkCurrent}, { role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
-      { label: 'View', submenu: [{ label: 'Address bar', accelerator: 'CmdOrCtrl+L', click: focusAddress }, { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => reloadTab(current()) }, { label: 'Reload without cache', accelerator: 'CmdOrCtrl+Shift+R', click: () => reloadTab(current(), true) }, { label: 'Developer Tools', accelerator: 'F12', click: () => toggleDevTools() }, { role: 'togglefullscreen' }, { label: 'Zoom in', accelerator: 'CmdOrCtrl+Plus', click: () => { const wc = current().view.webContents; wc.setZoomLevel(wc.getZoomLevel() + .5); } }, { label: 'Zoom out', accelerator: 'CmdOrCtrl+-', click: () => { const wc = current().view.webContents; wc.setZoomLevel(wc.getZoomLevel() - .5); } }, { label: 'Actual size', accelerator: 'CmdOrCtrl+0', click: () => current().view.webContents.setZoomLevel(0) }] }
+      { label: 'View', submenu: [{ label: 'Address bar', accelerator: 'CmdOrCtrl+L', click: focusAddress }, { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => reloadTab(current()) }, { label: 'Reload without cache', accelerator: 'CmdOrCtrl+Shift+R', click: () => reloadTab(current(), true) }, { label: 'Developer Tools', accelerator: 'F12', click: () => toggleDevTools() }, { role: 'togglefullscreen' }, { label: 'Zoom in', accelerator: 'CmdOrCtrl+Plus', click: () => zoomAction('in') }, { label: 'Zoom out', accelerator: 'CmdOrCtrl+-', click: () => zoomAction('out') }, { label: 'Actual size', accelerator: 'CmdOrCtrl+0', click: () => zoomAction('reset') }] }
     ]));
     const extensionDirectory = path.join(app.getPath('userData'),directoryName);
     await recoverClaudeUpdate(app.getPath('userData'));
@@ -1366,6 +1739,10 @@ else {
     const checkClaude = () => { if (!quitting && config.claudeAutoCheck && claudeState.status === 'ready' && !claudeUpdates.busy) claudeUpdates.check().catch(() => {}); };
     setTimeout(checkClaude, 15000).unref();
     setInterval(checkClaude, 24 * 60 * 60 * 1000).unref();
+    // Add-ons update themselves: shortly after the start and every six hours. New threat lists count at once.
+    const checkAddons = async () => { if (quitting || !addons) return; for (const a of addons.snapshot().installed.filter(x => x.enabled && x.status === 'active')) { const update = await addons.check(a.id).catch(error => { console.error(`Add-on ${a.id} update check:`, error?.message || error); return null; }); if (update?.status === 'updated') rescanTabs(); } emit(); };
+    setTimeout(() => checkAddons().catch(() => {}), 20000).unref();
+    setInterval(() => checkAddons().catch(() => {}), 6 * 60 * 60 * 1000).unref();
     setTimeout(() => { if (!privateBeta && config.autoUpdates) checkForUpdates().catch(() => {}); }, 10000).unref();
     setInterval(() => { if (!privateBeta && config.autoUpdates) checkForUpdates().catch(() => {}); }, 4 * 60 * 60 * 1000).unref();
   }).catch(error => {

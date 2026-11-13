@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
-const { tilePlan, fileName, freeName, savePng, copyPng, MAX_SIDE, MAX_WIDTH_CSS, PIXEL_BUDGET } = require('../src/screenshot.cjs');
+const { tilePlan, fileName, freeName, saveShot, copyPng, MAX_SIDE, MAX_WIDTH_CSS, PIXEL_BUDGET } = require('../src/screenshot.cjs');
 
 test('a short page is one tile at its own height', () => {
   assert.deepEqual(tilePlan(2914, 1, 1424), { width: 1424, height: 2914, cut: false, tiles: [{ y: 0, h: 2914 }] });
@@ -52,16 +52,33 @@ test('file name keeps only safe characters from the host', () => {
   assert.equal(fileName('xn--bcher-kva.example', 'live', when), 'Dioptra xn--bcher-kva.example live 2026-01-02 at 03.04.png');
 });
 
+test('Sharp and Small are saved as .jpg, Original and anything unknown as .png', () => {
+  const when = new Date(2026, 10, 12, 19, 10);
+  assert.equal(fileName('example.com', 'new server', when, 'sharp'), 'Dioptra example.com new server 2026-11-12 at 19.10.jpg');
+  assert.equal(fileName('example.com', 'compare', when, 'small'), 'Dioptra example.com compare 2026-11-12 at 19.10.jpg');
+  assert.equal(fileName('example.com', 'live', when, 'original'), 'Dioptra example.com live 2026-11-12 at 19.10.png');
+  assert.equal(fileName('example.com', 'live', when, 'constructor'), 'Dioptra example.com live 2026-11-12 at 19.10.png');
+  assert.equal(fileName('example.com', 'live', when), 'Dioptra example.com live 2026-11-12 at 19.10.png');
+});
+
 test('a name that exists gets (2), (3) and so on', () => {
   const taken = new Set(['a.png', 'a (2).png']);
   assert.equal(freeName('b.png', n => taken.has(n)), 'b.png');
   assert.equal(freeName('a.png', n => taken.has(n)), 'a (3).png');
 });
 
-test('savePng writes into a new folder and never overwrites', () => {
+test('a free name keeps the extension it came with', () => {
+  const taken = new Set(['a.jpg', 'a (2).jpg', 'a.png', 'b']);
+  assert.equal(freeName('a.jpg', n => taken.has(n)), 'a (3).jpg');
+  assert.equal(freeName('a.png', n => taken.has(n)), 'a (2).png', 'a .jpg of the same name does not count');
+  assert.equal(freeName('b', n => taken.has(n)), 'b (2)');
+  assert.equal(freeName('x.png.jpg', n => n === 'x.png.jpg'), 'x.png (2).jpg');
+});
+
+test('saveShot writes into a new folder and never overwrites', () => {
   const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dioptra-shot-')), 'Downloads');
   try {
-    const one = savePng(dir, 'x.png', Buffer.from('first')), two = savePng(dir, 'x.png', Buffer.from('second'));
+    const one = saveShot(dir, 'x.png', Buffer.from('first')), two = saveShot(dir, 'x.png', Buffer.from('second'));
     assert.equal(path.basename(one), 'x.png'); assert.equal(path.basename(two), 'x (2).png');
     assert.equal(fs.readFileSync(one, 'utf8'), 'first'); assert.equal(fs.readFileSync(two, 'utf8'), 'second');
   } finally { fs.rmSync(path.dirname(dir), { recursive: true, force: true }); }

@@ -182,12 +182,14 @@ async function inside() {
     assert.equal((await st()).tabs.find(t => t.id === host.id).noindex, 'worse');
     assert.equal(await ui.locator('#pane-bars .route-bar.live .route-noindex').count(), 0, 'no chip on the Live side');
 
-    // 2. The chip opens Differences on the Checks tab; the checks run after the comparison.
+    // 2. The chip opens Differences on the Checks part; the checks run after the comparison.
     await paneChip.click();
     const box = ui.locator('#differences');
-    await box.getByText('What stands out').waitFor();
-    assert.equal(await box.locator('.subtabs button[aria-pressed=true]').innerText().then(t => t.replace(/\d+$/, '').trim()), 'Checks');
-    assert.deepEqual((await box.locator('.subtabs button').allInnerTexts()).map(t => t.replace(/\s*\d+$/, '').trim()), ['Domains', 'Files', 'Speed', 'Checks', 'HTML', 'Headers']);
+    await box.locator('.diff-menu').waitFor();
+    const row = id => box.locator(`.dm-row[data-part="${id}"]`), over = id => box.locator(`.ov-part[data-part="${id}"]`);
+    assert.equal(await box.locator('.dm-row[aria-current=true] strong').innerText(), 'Checks');
+    assert.deepEqual(await box.locator('.dm-row strong').allInnerTexts(), ['Overview', 'External domains', 'Files', 'HTML', 'Headers', 'Speed', 'Checks']);
+    assert.deepEqual(await box.locator('.dm-list .lbl').allInnerTexts().then(a => a.map(t => t.toLowerCase())), ['the page', 'the server'], 'no Add-ons group without add-ons');
     const checks = await wait(async () => { const s = await st(); return s.checks?.status === 'done' && s.checks.report; }, 'checks done', 40000);
     assert.deepEqual(checks.counts, { problems: 4, differ: 0, passed: 9, total: 13 }, JSON.stringify(checks.groups.map(g => g.items.map(i => i.title))));
     assert.deepEqual(checks.groups.map(g => [g.label, g.items.length]), [['Search engines', 1], ['Old addresses', 1], ['Standard addresses', 2]]);
@@ -197,7 +199,7 @@ async function inside() {
     assert.deepEqual(await box.locator('.cs-n > span').evaluateAll(n => n.map(s => s.className)), ['bad', 'sep', 'ok']);
     assert.equal(await box.locator('.cs-sub').innerText(), '13 checks on both servers, compared with Live');
     assert.deepEqual((await box.locator('.cchip').allInnerTexts()).map(t => t.replace(/\s+/g, ' ')), ['Search engines 1', 'Old addresses 1', 'Standard addresses 2']);
-    assert.equal(await box.locator('.subtabs button', { hasText: 'Checks' }).locator('.tcount').innerText(), '4');
+    assert.equal(await row('checks').locator('.stag.is-fix').innerText(), '4 failed');
     const cards = box.locator('.pc');
     assert.equal(await cards.count(), 4);
     assert.match(await text(cards.nth(0)), /^Search engines The new server tells search engines not to index the site Open settings Hostfile noindex, nofollow Live index, follow, max-image-preview:large/);
@@ -238,13 +240,13 @@ async function inside() {
     assert.deepEqual(speed.why.map(w => [w.title, w.hostfile, w.live]), [['Page cache is off', 'none', 'LiteSpeed HIT'], ['Compression is off', 'none', 'br'], ['First byte is high', speed.why[2].hostfile, speed.why[2].live]]);
     assert.match(speed.why[0].fix, /nginx FastCGI cache or WP Super Cache/);
     assert.equal(speed.loads, 3);
-    await box.locator('.subtabs button', { hasText: 'Speed' }).click();
+    await row('speed').click();
     await box.locator('.sv').waitFor();
     assert.match(await box.locator('.sv').getAttribute('class'), /\bworse\b/);
     assert.equal(await box.locator('.sv-title').innerText(), 'The new server is slower than Live');
     assert.match(await text(box.locator('.sv-fx')), /^first byte \d+\.\d× slower · fully loaded \d+\.\d× slower · \+\d\.\d\d s per page$/);
     assert.equal(await text(box.locator('.sv-meta .lbl')), '3 loads each, median from this computer');
-    assert.equal(await box.locator('.subtabs button', { hasText: 'Speed' }).locator('.tcount').innerText(), '2');
+    assert.match(await row('speed').locator('.stag.is-fix').innerText(), /^\d+\.\d× slower$/);
     assert.equal(await box.locator('.tl-row').count(), 2);
     for (const side of ['h', 'l']) assert.equal(await box.locator(`.tl-row.${side} .tl-tick`).count(), 3, `three moments on ${side}`);
     await wait(async () => (await box.locator('.tl-lab').count()) === 6, 'tick labels placed');
@@ -276,19 +278,32 @@ async function inside() {
     assert.equal(await views(), 0, 'the measuring views are closed');
     assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1, 'no extra window');
     await ui.mouse.move(4, 1190); await shot('speed-check-1-speed.png');
-    await box.locator('.subtabs button', { hasText: 'Checks' }).click(); await box.locator('.cs').waitFor();
+    await row('checks').click(); await box.locator('.cs').waitFor();
     await ui.mouse.move(4, 1190); await shot('speed-check-2-checks.png');
-    await box.locator('.subtabs button', { hasText: 'Speed' }).click(); await box.locator('.sv').waitFor();
 
-    // 4. What stands out: the new findings first, the two older ones they replace are gone.
-    const findings = (await box.locator('.diff-side .finding').allInnerTexts()).map(t => t.replace(/\s+/g, ' ').trim());
-    for (const f of ['The new server tells search engines not to index this site (meta robots noindex). WordPress: Settings, Reading, Discourage search engines. Google drops the site after the switch.',
-      'The page on the new server still uses old addresses: the old server IP, a temporary URL, the staging domain and an http link.',
-      '/bestellen/ gives 404 on Hostfile, 200 on Live: permalinks or rewrite rules missing.', '/xmlrpc.php is open on Hostfile (200), blocked on Live (403).',
-      'Page cache and compression are off on the new server (Live: LiteSpeed HIT, br).', 'Server software differs: Hostfile nginx/1.26.2, Live LiteSpeed.']) assert.ok(findings.includes(f), `finding: ${f}\n${findings.join('\n')}`);
-    assert.ok(findings.some(f => /^The new server answers much slower: first byte \d+ ms against \d+ ms\.$/.test(f)), findings.join('\n'));
-    assert.ok(!findings.some(f => /responded much slower|Cache headers differ/.test(f)), findings.join('\n'));
-    assert.ok(findings.indexOf(findings.find(f => /not to index/.test(f))) < findings.indexOf('Server software differs: Hostfile nginx/1.26.2, Live LiteSpeed.'));
+    // 4. The Overview: the parts to fix first with their worst points; the two older findings Speed replaces are not shown.
+    await row('overview').click(); await box.locator('.dverdict').waitFor();
+    assert.match(await box.locator('.dverdict').getAttribute('class'), /\bworse\b/);
+    assert.equal(await box.locator('.dverdict .sv-title').innerText(), 'Not ready for the switch');
+    assert.match(await text(box.locator('.dverdict .sv-fx')), /^\d parts need a fix on the new server first: (.*, )?Speed, Checks\.$/);
+    assert.doesNotMatch(await text(box.locator('.dverdict')), /responded much slower|Cache headers differ|Server software differs/);
+    assert.equal(await box.locator('.dstep b').first().innerText(), 'Fix before the switch');
+    assert.equal(await text(over('checks').locator('.ov-head')), 'Checks 4 of 13 checks failed, 9 passed 4 failed ›');
+    // What the side column used to say, in the words of the cards, where it is now: the points of the Overview.
+    assert.deepEqual(await over('checks').locator('.ov-tops li').allInnerTexts(), ['The new server tells search engines not to index the site', '4 old addresses in the page of the new server', '/bestellen/ gives 404 on the new server', 'and 1 more']);
+    assert.equal(checks.groups.flatMap(g => g.items)[3].title, '/xmlrpc.php is open on the new server', 'the fourth point, on the page of the part');
+    assert.match(await text(over('speed').locator('.ov-head')), /^Speed First byte after \d+ ms, Live after \d+ ms \d+\.\d× slower ›$/);
+    assert.deepEqual(await over('speed').locator('.ov-tops li').allInnerTexts(), ['Page cache is off', 'Compression is off', 'First byte is high']);
+    assert.equal(await box.locator('.dstep b').last().innerText(), 'Nothing to do');
+    assert.equal(await box.locator('.ov-grid.c3 .ov-part[data-part=headers] .stag.is-info').count(), 1, 'the server software differs: to read, not judged');
+    assert.equal(await box.locator('.kpi, .subtabs, .diff-side, .finding').count(), 0, 'the cards, the sub tabs and the side column are gone');
+    await ui.mouse.move(4, 1190); await shot('speed-check-0-overview.png');
+    // The server software differs: a row of the Headers table (it was a finding in the side column).
+    await over('headers').click();
+    assert.deepEqual(await box.locator('.dscroll.headers tbody tr').evaluateAll(rows => rows.map(tr => [...tr.cells].map(td => td.textContent).join(' | ')).filter(t => /^server /.test(t))), ['server | nginx/1.26.2 | LiteSpeed']);
+    await row('checks').click(); await box.locator('.cs').waitFor();
+    assert.deepEqual(await box.locator('.pc .tt').evaluateAll(n => n.map(t => t.lastChild.textContent)), ['The new server tells search engines not to index the site', '4 old addresses in the page of the new server', '/bestellen/ gives 404 on the new server', '/xmlrpc.php is open on the new server']);
+    await row('speed').click(); await box.locator('.sp2 .sv').waitFor();
 
     // 5. Ask Claude: checks and speed inside the untrusted block.
     assert.equal((await cmd('differences-ask-claude')).ok, true);
@@ -328,28 +343,29 @@ async function inside() {
     await wait(async () => (await box.locator('.dhead .nl-chip').count()) === 1, 'no DNS record label in the head');
     assert.equal(await box.locator('.dhead .nl-chip').innerText(), 'no DNS record');
     assert.match(await text(box.locator('.dhead .dvs')), /^HOSTFILE 203\.0\.113\.10 vs LIVE no DNS record · compared \d/);
-    const kpis = await Promise.all((await box.locator('.kpi').all()).map(text));
-    assert.deepEqual(kpis.slice(0, 4), ['External domains 2 on Hostfile no Live to compare', 'Files Not measured Live has no page', 'HTML Not compared Live has no page', 'Headers Not compared Live has no page']);
-    assert.match(kpis[4], /^Status · speed 200 · no Live Hostfile (\d+ ms|\d\.\d s)$/);
-    assert.equal(await box.locator('.kpi.muted').count(), 4); assert.equal(await box.locator('.kpi.alert').count(), 0);
-    const nf = (await box.locator('.diff-side .finding').allInnerTexts()).map(t => t.replace(/\s+/g, ' ').trim());
-    assert.equal(nf[0], `Live could not be reached: ${DOMAIN} has no DNS record. Speed and Checks judged the new server on its own; comparing with Live waits until Live answers.`);
-    assert.match(await box.locator('.diff-side .finding').first().getAttribute('class'), /\bcalm\b/);
-    assert.ok(!nf.some(f => /only on Hostfile|The Live request failed|differs:/.test(f)), nf.join('\n'));
-    for (const f of ['The new server tells search engines not to index this site (meta robots noindex). WordPress: Settings, Reading, Discourage search engines. Google drops the site after the switch.',
-      'The page on the new server still uses old addresses: a temporary URL, the staging domain and an http link.', '/bestellen/ gives 404 on the new server, although the page links to it: permalinks or rewrite rules missing.',
-      '/xmlrpc.php is open on the new server (200).', 'Page cache and compression are off on the new server.']) assert.ok(nf.includes(f), `finding: ${f}\n${nf.join('\n')}`);
-    assert.ok(nf.some(f => /^First byte on the new server is \d+ ms; Google calls up to 800 ms good\.$/.test(f)), nf.join('\n'));
-    assert.equal(await box.locator('.subtabs button', { hasText: 'Speed' }).locator('.tcount').innerText(), '2');
-    assert.equal(await box.locator('.subtabs button', { hasText: 'Checks' }).locator('.tcount').innerText(), '3');
+    // The page parts have nothing to compare with: grey tags. The reason is a calm note under the verdict.
+    assert.deepEqual(await Promise.all(['domains', 'files', 'html', 'headers'].map(id => row(id).locator('.stag.is-none').innerText())), ['2 on Hostfile', 'Not measured', 'Not compared', 'Not compared']);
+    assert.equal(await text(box.locator('.dm-head p')), '6 parts, the new server on its own');
+    assert.equal(await row('speed').locator('.stag.is-check').innerText(), 'Needs work');
+    assert.equal(await row('checks').locator('.stag.is-fix').innerText(), '3 failed');
+    await row('overview').click(); await box.locator('.dverdict').waitFor();
+    assert.equal(await text(box.locator('.dverdict.worse .sv-fx')), '1 part needs a fix on the new server first: Checks.');
+    assert.deepEqual(await box.locator('.dverdict .sv-lim').allInnerTexts(), [`Live could not be reached: ${DOMAIN} has no DNS record. Speed and Checks judged the new server on its own; comparing with Live waits until Live answers.`]);
+    assert.doesNotMatch(await text(box.locator('.diff-main')), /only on Hostfile|The Live request failed|differs:/);
+    assert.deepEqual(await over('checks').locator('.ov-tops li').allInnerTexts(), ['The new server tells search engines not to index the site', '3 old addresses in the page of the new server', '/bestellen/ gives 404 on the new server', 'and 1 more']);
+    assert.equal(nolive.checks.report.groups.flatMap(g => g.items)[3].title, '/xmlrpc.php is open on the new server');
+    assert.equal(await text(over('checks').locator('.ov-head small')), '3 of 12 checks failed, 8 passed, 2 need Live');
+    assert.deepEqual(await over('speed').locator('.ov-tops li').allInnerTexts(), ['No page cache header', 'No compression', 'First byte above 800 ms']);
+    assert.deepEqual(await box.locator('.dstep').allInnerTexts().then(a => a.map(t => t.replace(/\s+/g, ' ').toLowerCase())), ['fix before the switch these break the site or put it at risk', 'look at once may be fine, worth a look', 'nothing to do shown so you can look it up']);
+    await fitShot('speed-check-3-nolive-overview-1440.png', 1440, 1200);
     // Speed: one row, the values of the new server with Google's dots, What to improve with targets.
-    await box.locator('.subtabs button', { hasText: 'Speed' }).click(); await box.locator('.sv.solo').waitFor();
+    await row('speed').click(); await box.locator('.sv.solo').waitFor();
     const banner = box.locator('.nl-banner');
     assert.equal(await banner.locator('b').innerText(), R.text);
     assert.equal(await banner.locator('p').innerText(), 'There is no old site to compare with, so Dioptra measured the new server on its own.');
     assert.match(await banner.locator('code').innerText(), /^getaddrinfo ENOTFOUND northwind-bakery\.test · checked \d/);
     assert.equal(await banner.getByRole('button').innerText(), 'Measure Live too');
-    assert.equal(await text(box.locator('.dch .lbl')), 'the new server on its own');
+    assert.equal(await text(box.locator('.dch .lbl').first()), 'The new server on its own');
     const sv = nolive.speed.report;
     assert.equal(sv.loads, 3); assert.equal(sv.timeline.rows.length, 1); assert.equal(sv.verdict.factors[0].q, 'ni', JSON.stringify(sv.medians.hostfile));
     assert.equal(sv.verdict.title, 'The new server is fast enough for Google on first paint, but first byte needs work', JSON.stringify(sv.medians.hostfile));
@@ -375,10 +391,10 @@ async function inside() {
     assert.match(await text(box.locator('.why-row').nth(2)), /^First byte above 800 ms Hostfile \d+ ms Target up to 800 ms Fix: PHP or the database is slow/);
     await fitShot('speed-check-4-nolive-speed-1440.png', 1440, 1200);
     // Checks: Expected next to Hostfile, the counts with need Live.
-    await box.locator('.subtabs button', { hasText: 'Checks' }).click(); await box.locator('.ck2.solo .cs').waitFor();
+    await row('checks').click(); await box.locator('.ck2.solo .cs').waitFor();
     assert.equal(await box.locator('.nl-banner p').innerText(), 'There is no old site to compare with, so Dioptra checked the new server on its own.');
     assert.equal(await box.locator('.nl-banner').getByRole('button').innerText(), 'Check Live too');
-    assert.equal(await text(box.locator('.dch .lbl')), 'the new server on its own, judged on what a good server gives');
+    assert.equal(await text(box.locator('.dch .lbl').first()), 'The new server on its own, judged on what a good server gives');
     assert.deepEqual(nolive.checks.report.counts, { problems: 3, differ: 1, passed: 8, needLive: 2, total: 12 });
     assert.deepEqual(await box.locator('.cs-n > span:not(.sep)').allInnerTexts(), ['3 problems', '1 warning', '8 passed', '2 need Live']);
     assert.equal(await box.locator('.cs-sub').innerText(), '12 checks on the new server alone, judged on what a good server gives');
@@ -397,17 +413,17 @@ async function inside() {
     await ui.mouse.move(4, 1190); await fitShot('speed-check-5-nolive-checks-1440.png', 1440, 1200);
     await size(1440, 1200); await sleep(600);
     // Domains, HTML and Headers do not compare with an empty Live.
-    await box.locator('.subtabs button', { hasText: 'Domains' }).click();
+    await row('domains').click();
     assert.deepEqual(await box.locator('.dscroll thead th').evaluateAll(n => n.map(x => x.textContent)), ['Domain', 'Hostfile', 'Loaded as']);
     assert.equal(await box.locator('.dscroll .pill').count(), 0);
-    for (const name of ['HTML', 'Headers']) { await box.locator('.subtabs button', { hasText: name }).click(); assert.equal(await box.locator('.dscroll .dempty').innerText(), 'Not compared: Live has no page.'); }
+    for (const name of ['html', 'headers']) { await row(name).click(); assert.equal(await box.locator('.dscroll .dempty').innerText(), 'Not compared: Live has no page.'); }
     // Ask Claude says it is the new server alone.
     assert.equal((await cmd('differences-ask-claude')).ok, true);
     const soloSummary = await clip(), b2 = soloSummary.indexOf('BEGIN UNTRUSTED SERVER DATA'), e2 = soloSummary.indexOf('END UNTRUSTED SERVER DATA');
     for (const part of ['Checks of the new server alone, Live could not be reached (3 problems, 1 warnings, 8 passed, 2 need Live):', 'Speed of the new server alone, Live could not be reached', '[info] Live could not be reached: northwind-bakery.test has no DNS record.']) {
       const at = soloSummary.indexOf(part); assert.ok(at > b2 && at < e2, `${part} inside the untrusted block`);
     }
-    await box.locator('.subtabs button', { hasText: 'Speed' }).click(); await box.locator('.sv.solo').waitFor();
+    await row('speed').click(); await box.locator('.sv.solo').waitFor();
     await fitShot('speed-check-6-nolive-speed-1180.png', 1180, 1420);
     await size(1440, 1200); await sleep(600);
 
@@ -433,7 +449,7 @@ async function inside() {
 
     // 9. Live answers again: Check Live too runs the normal comparison of both servers, as in 1.2.0-beta.2.
     publicLive(OLD); delay('new', 650);
-    await box.locator('.subtabs button', { hasText: 'Checks' }).click();
+    await row('checks').click();
     await box.getByRole('button', { name: 'Check Live too' }).click();
     const back = await soloDone('Live answers again: both servers compared', false);
     assert.equal(back.differences.liveReason, null);
@@ -443,7 +459,7 @@ async function inside() {
     assert.deepEqual(await box.locator('.cs-n > span:not(.sep)').allInnerTexts(), ['4 problems', '9 passed']);
     assert.equal(await box.locator('.dhead .nl-chip').count(), 0);
     assert.match(await text(box.locator('.dhead .dvs')), /198\.51\.100\.24 · compared \d/);
-    await box.locator('.subtabs button', { hasText: 'Speed' }).click(); await box.locator('.sv.worse').waitFor();
+    await row('speed').click(); await box.locator('.sv.worse').waitFor();
     assert.equal(await box.locator('.tl-row').count(), 2); assert.equal(await box.locator('.fs-row').count(), 2);
 
     assert.doesNotMatch(stderr, /observer failed|main process error|unhandled rejection/i, stderr);

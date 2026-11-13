@@ -90,7 +90,7 @@ test('why slower: one row per cause, the page cache fix follows the server softw
   assert.deepEqual(s.causes(m, { hostfile: { 'x-cache': 'MISS' }, live: PAGES.live }).map(r => r.id), ['compression', 'ttfb'], 'a cache that missed is not off');
   assert.deepEqual(s.causes({ hostfile: { ttfb: 300 }, live: { ttfb: 140 } }, {}), [], 'first byte 160 ms higher is not high');
 });
-test('findings for What stands out, and the Speed tab count', () => {
+test('the findings of Speed', () => {
   const m = s.medians(ROUNDS), v = s.verdict(m), f = s.findings(v, m, s.causes(m, PAGES));
   assert.deepEqual(f.map(x => x.text), ['The new server answers much slower: first byte 668 ms against 141 ms.', 'Page cache and compression are off on the new server (Live: LiteSpeed HIT, br).']);
   assert.deepEqual(s.findings(v, m, [{ id: 'cache', live: 'LiteSpeed HIT' }]).map(x => x.text)[1], 'Page cache is off on the new server (Live: LiteSpeed HIT).');

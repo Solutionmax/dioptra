@@ -31,6 +31,7 @@ function render(next) {
     $('page-error').hidden = inDiff || Boolean(state.comparison) || !tab.error; $('page-error-detail').textContent = tab.error || ''; $('page-error-url').textContent = tab.url;
     $('page-error-title').textContent = tab.certBlocked ? 'Live certificate is not trusted' : 'Unable to load page'; $('page-error-hint').hidden = Boolean(tab.certBlocked); $('page-error-help').replaceChildren(...(tab.error ? errorHelp(tab) : []));
     setIcon($('protocol'), tab.url.startsWith('https:') ? 'lock' : 'globe');
+    renderZoom(tab);
   }
   $('panel').hidden = !state.panel; document.body.classList.toggle('panel-open', Boolean(state.panel));
   $('domains').classList.toggle('selected', state.panel === 'domains');
@@ -101,6 +102,13 @@ function render(next) {
   renderOnboarding();
   document.dispatchEvent(new CustomEvent('dioptra:state', { detail: state })); // the scene on the start page (scene.js) follows the rules and the page
 }
+// Zoom of the tab, both panes in Compare: quiet grey at 100 %, blue otherwise. The card (main) has − +, the steps and Reset.
+function renderZoom(tab) {
+  const percent = Math.round((tab.zoom || 1) * 100), both = Boolean(state.comparison);
+  $('zoom').classList.toggle('on', percent !== 100); $('zoom-value').textContent = `${percent}%`; $('zoom-both').hidden = !both;
+  $('zoom').setAttribute('aria-label', `Zoom ${percent}%${both ? ', both panes' : ''}`);
+  $('zoom').title = `Zoom ${percent}%${both ? ' on both panes' : ''} (${state.platform === 'darwin' ? '⌘' : 'Ctrl'} + and −)`;
+}
 function renderSettings() {
   const home=settingsCategory==='home';
   $('settings-menu').hidden=!home;$('settings-home-note').hidden=!home;$('settings-back').hidden=home;
@@ -109,13 +117,83 @@ function renderSettings() {
   const tab=state.tabs.find(tab=>tab.id===state.activeId);let host='';try{host=new URL(tab?.url).host;}catch{}
   $('settings-current-site').textContent=host?`Current site · ${host}`:'Current site';
   $('clear-site-data').disabled=!host;
-  renderClaudeSettings();
+  renderClaudeSettings(); renderAddons();
 }
 async function openSettings(category) {
   settingsCategory=category;
   if(state.panel!=='settings') await command('panel','settings');
   renderSettings();document.querySelector('#panel .panel-scroll').scrollTop=0;
   if(category==='home') $('settings-menu').querySelector('button').focus();else $('settings-back').focus();
+}
+/* Add-ons (1.4). Main installs, checks and runs them; this page only shows state.addons and sends commands. */
+let addonUI = { code: '', error: '', busy: '', removing: '' }, addonKey = '';
+async function addonCommand(action, data, busy) {
+  addonUI = { ...addonUI, busy, error: '' }; renderAddons();
+  const result = await window.browser.command(action, data).catch(error => ({ ok: false, error: error.message }));
+  addonUI = { ...addonUI, busy: '', removing: '', error: result.ok ? '' : result.error || 'That did not work.', code: result.ok && action === 'addon-install' ? '' : addonUI.code };
+  if (result.ok && result.notice) toast(result.notice);
+  renderAddons(); return result;
+}
+function addonHead(a, chips) {
+  // A known add-on shows its own drawing, white on a tile in its colour (ADDON_LOOK); any other one the puzzle piece.
+  const look = Object.hasOwn(ADDON_LOOK, a.id) ? ADDON_LOOK[a.id] : null;
+  const row = el('div', 'settings-row claude-heading'), logo = el('div', `addon-logo${look ? ' filled' : ''}`), grow = el('div', 'settings-grow'), line = el('div', 'addon-chips');
+  logo.append(icon(look ? a.id : 'puzzle')); line.append(...chips);
+  if (look) { logo.style.background = `linear-gradient(150deg, ${look[3]}, ${look[4]})`; logo.style.boxShadow = `inset 0 1px 0 rgba(255,255,255,.35), 0 7px 16px -8px ${look[4]}`; }
+  grow.append(el('h3', '', a.name), el('p', '', a.by ? `Add-on by ${a.by}` : 'Add-on'), line); row.append(logo, grow); return row;
+}
+const addonChip = (text, tone = '') => el('span', `status-chip ${tone}`, text);
+function addonList(title, items) { const card = el('div', 'settings-card'), list = el('ul', 'addon-list'); for (const item of items) list.append(el('li', '', item)); card.append(el('h4', '', title), list); return card; }
+function addonActions(...buttons) { const row = el('div', 'settings-actions'); row.append(...buttons); return row; }
+function addonButton(label, onclick, className = '') { const b = el('button', className, label); b.type = 'button'; b.onclick = onclick; b.disabled = Boolean(addonUI.busy); return b; }
+function renderAddons() {
+  const box = $('addons-body'), A = state?.addons || { installed: [], pending: null };
+  const key = JSON.stringify([A, addonUI.error, addonUI.busy, addonUI.removing]);
+  if (key === addonKey) return; addonKey = key;
+  // The page is rebuilt when an update check ends: someone typing a code keeps the field and the caret.
+  const typing = document.activeElement?.id === 'addon-code' ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
+  const nodes = [], time = iso => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
+  const error = () => { const p = el('p', 'addon-error', addonUI.error); p.setAttribute('role', 'alert'); return p; };
+  if (A.pending) {
+    // The manifest is fetched and its signature holds; no code has been fetched yet.
+    const p = A.pending;
+    nodes.push(addonHead(p, [addonChip('✓ Signature verified'), addonChip(p.version, 'blue')]));
+    if (p.adds.length) nodes.push(addonList('What it adds', p.adds));
+    if (p.may.length) nodes.push(addonList('What it may do', p.may));
+    if (addonUI.error) nodes.push(error());
+    nodes.push(addonActions(addonButton(addonUI.busy === 'install' ? 'Installing…' : 'Install', () => addonCommand('addon-install', null, 'install'), 'primary'), addonButton('Cancel', () => addonCommand('addon-cancel', null, ''))),
+      el('p', 'settings-note', 'Signed by SolutionMAX. It updates itself from the same address; every update is checked the same way.'));
+    box.replaceChildren(...nodes); return;
+  }
+  nodes.push(el('h3', '', 'Add-ons'), el('p', '', 'Extra tools for Dioptra, installed with a personal code'));
+  for (const a of A.installed) {
+    const broken = a.status !== 'active', card = el('div', 'settings-card addon');
+    card.dataset.addon = a.id;
+    card.append(addonHead(a, [addonChip(broken ? 'Needs attention' : a.enabled ? 'Active' : 'Off', broken ? 'amber' : a.enabled ? '' : 'blue'), ...(a.version ? [addonChip(a.version, 'blue')] : [])]));
+    if (broken) card.append(el('p', 'addon-error', a.message || 'This add-on could not be loaded.'));
+    else {
+      card.append(el('p', '', a.enabled ? 'Scans every page after it has loaded, and both servers in Differences.' : 'Switched off: nothing is scanned.'));
+      const facts = el('dl', 'addon-facts');
+      facts.append(el('dt', '', a.data.label || 'Threat list'), el('dd', '', `${a.data.rules.toLocaleString('en-US')} ${a.data.rules === 1 ? 'rule' : 'rules'} · ${a.data.version || 'no version'}`));
+      facts.append(el('dt', '', 'Updates'), el('dd', '', (!a.restart && a.update?.message) || (a.checkedAt ? `Automatic. Last checked ${time(a.checkedAt)}.` : 'Automatic.')));
+      card.append(facts);
+      if (a.restart) card.append(el('p', 'addon-restart', 'A new version is ready. Restart Dioptra to use it.'));
+    }
+    const removing = addonUI.removing === a.id;
+    if (removing) { const ask = el('div', 'inline-confirm'); ask.append(el('p', '', `Remove ${a.name}? You need your code to install it again.`), addonActions(addonButton('Cancel', () => { addonUI = { ...addonUI, removing: '' }; renderAddons(); }), addonButton('Remove add-on', () => addonCommand('addon-remove', a.id, 'remove'), 'danger'))); card.append(ask); }
+    else card.append(addonActions(...(broken ? [] : [addonButton(addonUI.busy === `check:${a.id}` ? 'Checking…' : 'Check for updates', () => addonCommand('addon-check', a.id, `check:${a.id}`)), addonButton(a.enabled ? 'Turn off' : 'Turn on', () => addonCommand('addon-enable', { id: a.id, on: !a.enabled }, 'enable'))]), addonButton('Remove…', () => { addonUI = { ...addonUI, removing: a.id, error: '' }; renderAddons(); }, 'danger')));
+    nodes.push(card);
+  }
+  const add = el('div', 'settings-card'), input = el('input', 'addon-code'), go = addonButton(addonUI.busy === 'preview' ? 'Checking…' : 'Continue', () => { if (addonUI.code.trim()) addonCommand('addon-preview', addonUI.code.trim(), 'preview'); }, 'primary');
+  input.type = 'text'; input.id = 'addon-code'; input.placeholder = 'DIOPTRA-…'; input.autocomplete = 'off'; input.spellcheck = false; input.value = addonUI.code; input.disabled = Boolean(addonUI.busy);
+  input.setAttribute('aria-label', 'Add-on code'); input.oninput = () => { addonUI.code = input.value; };
+  input.onkeydown = event => { if (event.key === 'Enter') go.click(); };
+  add.append(el('h4', '', A.installed.length ? 'Install another add-on' : 'No add-ons installed'), el('p', '', 'Paste the add-on code you were given. Dioptra fetches the add-on and shows what it is before anything is installed.'), input);
+  if (addonUI.error) add.append(error());
+  add.append(addonActions(go));
+  nodes.push(add, el('p', 'settings-note', 'Dioptra only installs add-ons signed by SolutionMAX. Anything else is refused.'));
+  box.replaceChildren(...nodes);
+  if (typing && !input.disabled) { input.focus(); input.setSelectionRange(...typing); }
 }
 function renderClaudeSettings() {
   const c=state.claude, u=c.update||{status:'idle'}, installed=Boolean(c.version), ready=c.status==='ready';
@@ -510,13 +588,11 @@ async function openDifferences() {
   if(d?.status!=='running' && !(d?.status==='done' && d.report?.url===tab?.url)) command('differences-run');
 }
 $('view-differences').onclick=openDifferences;
-// A files chip opens Differences on its Files tab. Like the cards: on pointerdown, because the bar is rebuilt on every state update.
-function openChecks() { diffTab='checks'; diffKey=''; if(currentView()==='differences') renderDifferences(state.tabs.find(t=>t.id===state.activeId),'differences'); else openDifferences(); }
-document.addEventListener('pointerdown',event=>{ if(event.button===0 && event.target.closest?.('[data-checks]')) { event.preventDefault(); openChecks(); } },true);
-document.addEventListener('click',event=>{ if(event.detail===0 && event.target.closest?.('[data-checks]')) openChecks(); });
-function openFiles() { diffTab='files'; diffKey=''; if(currentView()==='differences') renderDifferences(state.tabs.find(t=>t.id===state.activeId),'differences'); else openDifferences(); }
-document.addEventListener('pointerdown',event=>{ if(event.button===0 && event.target.closest?.('[data-files]')) { event.preventDefault(); openFiles(); } },true);
-document.addEventListener('click',event=>{ if(event.detail===0 && event.target.closest?.('[data-files]')) openFiles(); });
+// A label in the server bar opens Differences on its part. Like the cards: on pointerdown, because the bar is rebuilt on every state update.
+function openPart(id) { diffPart=id; diffKey=''; diffFocus=true; if(currentView()==='differences') renderDifferences(state.tabs.find(t=>t.id===state.activeId),'differences'); else openDifferences(); }
+const chipPart=target=>{ const chip=target.closest?.('[data-addon-tab],[data-files],[data-checks]'); return chip ? (chip.dataset.addonTab ? `addon:${chip.dataset.addonTab}` : chip.dataset.files ? 'files' : 'checks') : ''; };
+document.addEventListener('pointerdown',event=>{ const part=event.button===0 && chipPart(event.target); if(part) { event.preventDefault(); openPart(part); } },true);
+document.addEventListener('click',event=>{ const part=event.detail===0 && chipPart(event.target); if(part) openPart(part); });
 $('clear-site-data').onclick=async()=>{ if((await command('clear-site-data')).ok) toast('Site data cleared for this site.'); };
 $('open-release').onclick=$('release-page').onclick=()=>command('open-release');
 $('footer-version').onclick=()=>openSettings('updates');
@@ -549,6 +625,7 @@ document.querySelectorAll('[data-library]').forEach(b=>b.onclick=()=>{libraryTab
 /* View state, route bars and the Differences view. All dynamic text uses textContent. */
 const ICONS = {
   trash: '<path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/>',
+  puzzle: '<path d="M9 4h4v2.5a1.5 1.5 0 0 0 3 0V4h4v5h-2.5a1.5 1.5 0 0 0 0 3H20v8h-5v-2.5a1.5 1.5 0 0 0-3 0V20H4v-6h2.5a1.5 1.5 0 0 0 0-3H4V4z"/>',
   folder: '<path d="M3 5h7l2 3h9v12H3z"/>',
   pause: '<path d="M8 5v14M16 5v14"/>',
   play: '<path d="m7 4 13 8-13 8z"/>',
@@ -566,7 +643,18 @@ const ICONS = {
   sliders: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="17" r="2"/>',
   pen: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/>',
-  open: '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>'
+  open: '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+  // The parts of Differences, and the add-ons that have their own icon (see ADDON_LOOK).
+  overview: '<rect x="3.5" y="4" width="7" height="7" rx="1.6"/><rect x="13.5" y="4" width="7" height="7" rx="1.6"/><rect x="3.5" y="14" width="7" height="6" rx="1.6"/><rect x="13.5" y="14" width="7" height="6" rx="1.6"/>',
+  domains: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c3 3.3 3 13.7 0 17M12 3.5c-3 3.3-3 13.7 0 17"/>',
+  files: '<path d="M14 3H7.2A2.2 2.2 0 0 0 5 5.2v13.6A2.2 2.2 0 0 0 7.2 21h9.6a2.2 2.2 0 0 0 2.2-2.2V8z"/><path d="M14 3v5h5M9 13h6M9 16.5h4"/>',
+  html: '<path d="M8 8l-4 4 4 4M16 8l4 4-4 4M13.6 5l-3.2 14"/>',
+  headers: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.2"/><path d="M3.5 9h17M7 13h6M7 16h9"/>',
+  speed: '<path d="M4.6 17.5a8.5 8.5 0 1 1 14.8 0"/><path d="M12 13.5l4-5"/><circle cx="12" cy="14" r="1.2"/>',
+  checks: '<path d="M4 6.5l1.6 1.6L8.4 5M4 12.5l1.6 1.6 2.8-3.1M4 18.5l1.6 1.6 2.8-3.1M12 6.5h8M12 12.5h8M12 18.5h8"/>',
+  'malware-scan': '<rect x="8" y="8.5" width="8" height="11.5" rx="4"/><path d="M9.6 8.6a2.4 2.4 0 0 1 4.8 0"/><path d="M10 6.3L8.4 4.2M14 6.3l1.6-2.1M8 12.5H4.5M8 16.2H5l-1 1.8M16 12.5h3.5M16 16.2h3l1 1.8M12 11.5v8.5"/>',
+  'seo-check': '<circle cx="10.5" cy="10.5" r="6.8"/><path d="M15.5 15.5L20.5 20.5"/><path d="M7.8 13v-1.6M10.5 13V9.2M13.2 13V7.4"/>',
+  'wp-leak-check': '<rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8.5 10.5V7.3a3.5 3.5 0 0 1 6.8-1.2"/><path d="M12 13.2c1.1 1.3 1.7 2.2 1.7 3a1.7 1.7 0 0 1-3.4 0c0-.8.6-1.7 1.7-3z"/>'
 };
 function icon(name) { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.innerHTML = ICONS[name]; return svg; }
 function setIcon(node, name) { if (node.dataset.icon === name) return; node.dataset.icon = name; node.replaceChildren(icon(name)); }
@@ -653,7 +741,6 @@ $('onboarding-file').onchange=async()=>{
   if(result?.ok)$('onboarding-import-status').textContent=`${result.imported} servers imported${result.skipped ? ` · ${result.skipped} rows skipped` : ''}.`;
 };
 const bareIP = ip => String(ip || '').replace(/^\[|\]$/g, '').replace(/^::ffff:/, '');
-function formatMs(ms) { return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`; }
 // Any click in the window UI outside the button closes the certificate card; the button itself toggles it.
 // Handled on the document and on pointerdown: the bar is rebuilt on every state update, so a button can be replaced between press and release and would then never get its click.
 function toggleCard(button) { const r = button.getBoundingClientRect(); command('card', { kind: button.dataset.card, id: Number(button.dataset.tab) || 0, right: r.right, bottom: r.bottom }); }
@@ -713,10 +800,12 @@ function routeBar(t, { pane = false, selected = false, other } = {}) {
   identity.append(badge);
   if (t.route.untrusted) { const chip = el('button', 'route-untrusted', 'Not trusted'); chip.type = 'button'; chip.dataset.card = 'site'; chip.dataset.tab = t.id; chip.title = 'You chose Continue anyway for this certificate. Click for details.'; chip.setAttribute('aria-haspopup', 'dialog'); identity.append(chip); }
   if (cached) { const cache = el('button', 'route-cache', 'Cached'); cache.type='button'; cache.dataset.card='cache'; cache.dataset.tab=t.id; cache.setAttribute('aria-haspopup','dialog'); identity.append(cache); }
-  identity.append(...filesChips(t, !$('view-differences').disabled), ...noindexChip(t, !$('view-differences').disabled));
+  identity.append(...addonChips(t, !$('view-differences').disabled), ...filesChips(t, !$('view-differences').disabled), ...noindexChip(t, !$('view-differences').disabled));
   const ips = !cached && !t.error && !t.loading ? bareIP(t.connection?.ip) : '';
   const measured = t.startPage ? 'Ready to browse' : t.loading ? 'Connecting…' : ips || (cached ? 'IP · Not measured' : 'Not measured');
   identity.append(el('span', 'route-ip', measured));
+  // Each pane shows its own size when it is not 100 %, so it is clear that both panes are zoomed alike.
+  if (pane && Math.round((t.zoom || 1) * 100) !== 100) { const zoom = el('span', 'route-zoom', `${Math.round(t.zoom * 100)}%`); zoom.title = `This pane is zoomed to ${zoom.textContent}`; identity.append(zoom); }
   if (ips && t.connection?.hostname) { const ptr=el('span','ptr',t.connection.hostname);ptr.title=`Reverse DNS (PTR) of ${ips}: ${ptr.textContent}`;identity.append(ptr); }
   bar.append(identity);
   if (other !== undefined) bar.append(compareWithBar(t));
@@ -731,7 +820,7 @@ function renderRouteBar(tab, view) {
   if (view === 'compare') { bar.classList.add('idle'); bar.append(el('span', 'route-domain', 'Comparing Hostfile and Live')); return; }
   const next = routeBar(tab); bar.className = next.className; bar.title = next.title; bar.append(...next.childNodes);
 }
-let diffTab = 'domains', diffKey = '';
+let diffPart = 'overview', diffKey = '', diffFocus = false, diffScope = 'page', siteChoose = false, siteShowRest = false, siteListDraft = '', siteAffectedOpen = false;
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 // Red: files that fail only on this side. Orange: they fail on the other server too, so not a migration difference.
 function filesChips(t, clickable) {
@@ -752,6 +841,14 @@ function filesChips(t, clickable) {
   if (f.old && hostfile) chips.push(chip(`${f.old} from old server`, false, `${plural(f.old, 'file')} on this page came from the old server: ${f.oldHosts.join(', ')} ${f.oldHosts.length === 1 ? 'has' : 'have'} no domain rule.`));
   return chips;
 }
+// Red: an add-on found a threat on this page. Orange: an add-on that is not about threats found a problem. With a rule the label opens the add-on's tab in Differences, else a card.
+function addonChips(t, clickable) {
+  return (t.chips || []).map(chip => {
+    const c = el('button', `route-failed route-addon${chip.tone === 'warn' ? ' both' : ''}`); c.type = 'button'; c.append(icon('alert'), chip.text);
+    if (chip.differences && clickable) c.dataset.addonTab = chip.id; else { c.dataset.card = 'addon'; c.dataset.tab = t.id; c.setAttribute('aria-haspopup', 'dialog'); }
+    c.title = `${chip.title} Click to see what was found.`; c.setAttribute('aria-label', c.title); return c;
+  });
+}
 // Red: the new server tells search engines not to index the page. Orange: Live says so too, so not a migration difference.
 function noindexChip(t, clickable) {
   if (!t.noindex || t.startPage) return [];
@@ -767,75 +864,225 @@ function renderDifferences(tab, view) {
   if (box.hidden) { diffKey = ''; return; }
   const d = state.differences || { status: 'idle' }, r = d.report;
   const nl = d.liveReason || null; // Live could not be reached: nothing below compares with an empty Live
-  const key = JSON.stringify([d.status, d.error, r?.comparedAt, r?.url, diffTab, state.tabs.find(t => t.id === state.activeId)?.route.label, state.files, pageTabsKey(), nl && [nl.text, nl.detail, nl.checkedAt], d.liveRetry]);
-  if (key === diffKey) return; diffKey = key;
+  // The whole-site result of this tab, if there is one; without it there is only the page.
+  const site = state.site || null, inSite = diffScope === 'site' && Boolean(site);
+  if (!site) { diffScope = 'page'; siteChoose = false; siteListDraft = ''; }
+  const key = JSON.stringify([d.status, d.error, r?.comparedAt, r?.url, diffPart, state.tabs.find(t => t.id === state.activeId)?.route.label, state.files, pageTabsKey(), nl && [nl.text, nl.detail, nl.checkedAt], d.liveRetry, diffScope, siteChoose, siteShowRest, site]);
+  // Nothing to draw: a focus that was asked for (the open part was clicked again) must not wait for a later, unrelated redraw.
+  if (key === diffKey) { diffFocus = false; return; }
+  diffKey = key;
   if (d.status === 'running' || (d.status === 'idle' && !r)) { const n = el('div', 'dstate'); n.append(el('div', 'spinner'), el('h2', '', 'Comparing both servers'), el('p', '', 'Fetching the page from the Hostfile server and from Live.')); return diffState(box, n); }
   if (d.status === 'error' || !r) { const n = el('div', 'dstate'); n.append(el('h2', '', 'Comparison failed'), el('code', '', d.error || 'No report available.')); const again = el('button', 'primary', 'Try again'); again.onclick = () => command('differences-run'); n.append(again); return diffState(box, n); }
-  const domains = r.domains || [], liveOnly = domains.filter(x => x.live && !x.hostfile), hostOnly = domains.filter(x => x.hostfile && !x.live), oneSided = [...liveOnly, ...hostOnly];
   let host = ''; try { host = new URL(r.url).hostname; } catch {}
   const main = el('div', 'diff-main'), head = el('div', 'dhead'), vs = el('div', 'dvs');
   const badgeHF = el('span', 'badge', 'HOSTFILE'), badgeLive = el('span', 'badge', 'LIVE'); const hfWrap = el('span', 'hostfile'), liveWrap = el('span', 'live'); hfWrap.append(badgeHF); liveWrap.append(badgeLive);
   const compared = `compared ${new Date(r.comparedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`, liveText = el('span', '');
   if (nl) { const chip = el('span', 'nl-chip', nl.short); chip.title = nl.text; liveText.append(chip, `· ${compared}`); } else liveText.textContent = `${r.live?.ip || 'n/a'} · ${compared}`;
   vs.append(hfWrap, el('span', '', r.hostfile?.ip || 'n/a'), el('span', '', 'vs'), liveWrap, liveText);
-  const again = el('button', 'btn'); again.append(icon('reload'), 'Compare again'); again.onclick = () => command('differences-run');
-  head.append(el('h2', '', host || r.url), vs, again);
-  const kpis = el('div', 'kpis five');
-  const card = (label, big, sub, alert, muted) => { const c = el('div', `kpi${alert ? ' alert' : ''}${muted ? ' muted' : ''}`); c.append(el('div', 'lbl', label), el('div', 'n', big), el('div', 's', sub)); return c; };
-  const headerDiffs = r.headers || [];
-  if (nl) kpis.append(
-    card('External domains', domains.length ? `${domains.length} on Hostfile` : 'None found', 'no Live to compare', false, true),
-    card('Files', 'Not measured', 'Live has no page', false, true), card('HTML', 'Not compared', 'Live has no page', false, true), card('Headers', 'Not compared', 'Live has no page', false, true),
-    card('Status · speed', `${r.hostfile?.status ?? 'n/a'} · no Live`, `Hostfile ${Number.isFinite(r.hostfile?.ms) ? formatMs(r.hostfile.ms) : 'not measured'}`, false));
-  else kpis.append(
-    card('External domains', oneSided.length ? `${oneSided.length} only on ${liveOnly.length && !hostOnly.length ? 'Live' : hostOnly.length && !liveOnly.length ? 'Hostfile' : 'one side'}` : 'No differences', oneSided.length ? oneSided.slice(0, 2).map(x => x.host).join(', ') : `${domains.length} found on both`, liveOnly.length > 0),
-    filesCard(state.files, card),
-    card('HTML', r.html?.changedLines ? `${r.html.changedLines} line${r.html.changedLines === 1 ? '' : 's'}` : 'Identical', r.html?.changedLines ? 'changed between servers' : 'same markup', false),
-    card('Headers', String(headerDiffs.length), headerDiffs.length ? headerDiffs.slice(0, 3).map(h => h.name).join(', ') : 'no differences', false),
-    card('Status · speed', `${r.hostfile?.status ?? '—'} · ${r.live?.status ?? '—'}`, `${Number.isFinite(r.hostfile?.ms) ? formatMs(r.hostfile.ms) : '—'} vs ${Number.isFinite(r.live?.ms) ? formatMs(r.live.ms) : '—'}`, r.hostfile?.status !== r.live?.status));
-  const box2 = el('div', 'dcard'), ch = el('div', 'dch'), tabs = el('div', 'subtabs');
-  const titles = { domains: ['External domains', 'where the page loads scripts, fonts and images from'], files: ['Files that did not load', 'per server'], speed: ['Speed', nl ? 'the new server on its own' : 'new server against Live'], checks: ['Checks', nl ? 'the new server on its own, judged on what a good server gives' : 'search engines, old addresses, standard URLs'], html: ['HTML', 'changed lines with context'], headers: ['Headers', 'only where the servers differ'] };
-  ch.append(el('b', '', titles[diffTab][0]), el('span', 'lbl', titles[diffTab][1]));
-  if (diffTab === 'files') {
+  // Compare again: in Whole site the same list of pages once more, else this page.
+  const again = el('button', 'btn'); again.append(icon('reload'), 'Compare again'); again.onclick = () => (inSite ? command('site-run', { again: true }) : command('differences-run'));
+  const ask = el('button', 'primary ask'), img = document.createElement('img'); img.src = 'brand/claude.png'; img.alt = ''; ask.append(img, 'Ask Claude');
+  ask.title = 'Sends the comparison of this page to the Claude panel. Claude keeps working as it does now.';
+  ask.onclick = async () => { const result = await command('differences-ask-claude'); if (result.ok && result.notice) toast(result.notice); };
+  const acts = el('div', 'dacts'); acts.append(ask, again); head.append(el('h2', '', host || r.url), vs, acts);
+  // The menu on the right picks what the main area shows: the Overview or one part. A part that is gone (its add-on was removed) falls back to the Overview.
+  const model = diffParts(state), parts = inSite ? siteParts(site, model) : model.parts, current = parts.find(p => p.id === diffPart), shown = model.parts.find(p => p.id === diffPart);
+  if (!current || !shown) diffPart = 'overview';
+  const open = id => { diffPart = id; diffFocus = true; renderDifferences(tab, currentView()); $('canvas').scrollTop = 0; };
+  main.append(head, scopeRow(site, r, tab), ...(current && shown ? partPage(shown, r, nl, open, inSite ? current : null) : inSite ? siteOverview(site, parts, open) : overviewPage(model, nl, open)));
+  // Drawing again replaces every button: the focus goes back to the row it was on, or to the row of the part just opened.
+  const active = box.contains(document.activeElement) ? document.activeElement : null, where = diffFocus || active?.closest('.diff-menu') ? '.diff-menu' : '.diff-main', keep = diffFocus ? diffPart : active?.closest('[data-part]')?.dataset.part;
+  // The same for what a whole-site run redraws under the user's hands (after every page): Cancel, Show all, a page
+  // row, the chooser. data-keep names them; the list keeps what was typed and where the cursor was.
+  const held = !keep && active ? active.closest('[data-keep]') : null, heldId = held?.dataset.keep, caret = held?.tagName === 'TEXTAREA' ? [held.selectionStart, held.selectionEnd] : null;
+  box.replaceChildren(main, diffMenu(parts, nl, open, inSite ? site : null));
+  if (keep) { const at = [...box.querySelectorAll(`${where} [data-part]`)].find(n => n.dataset.part === keep); (at?.matches('button') ? at : at?.querySelector('.ov-open'))?.focus(); }
+  else if (heldId) { const at = [...box.querySelectorAll('[data-keep]')].find(n => n.dataset.keep === heldId); if (at) { at.focus({ preventScroll: true }); if (caret && at.tagName === 'TEXTAREA') at.setSelectionRange(caret[0], caret[1]); } }
+  diffFocus = false;
+}
+// The tag is cut off when an add-on brings long words; the whole text is in its tooltip.
+const stateTag = p => { const t = el('span', `stag is-${p.state}`, p.tag); t.title = p.tag; return t; }; // "is-": .check is the class of the checkboxes
+// ponytail: icon and colour of the add-ons that exist today, keyed by id; the upgrade path is an icon field in the add-on manifest.
+// Per add-on: ink, light tile and border (Differences), then the light and dark end of the filled logo in Settings.
+const ADDON_LOOK = { 'malware-scan': ['#6938ef', '#f1edfe', '#d9d0fb', '#8f73f8', '#5a2fd9'], 'seo-check': ['#175cd3', '#e8f1fd', '#c5dbf8', '#4ea6fb', '#175cd3'], 'wp-leak-check': ['#0e7090', '#e3f5f9', '#b9e2ec', '#27bcd9', '#0b6680'] };
+function partTile(p) {
+  // Object.hasOwn: an add-on may be called "constructor".
+  const t = el('span', 'ptile'), look = p.addon && Object.hasOwn(ADDON_LOOK, p.addon) ? ADDON_LOOK[p.addon] : null;
+  t.append(icon(p.addon ? (look ? p.addon : 'puzzle') : p.id)); t.firstChild.setAttribute('aria-hidden', 'true');
+  if (look) [t.style.color, t.style.background, t.style.borderColor] = look;
+  return t;
+}
+// site: the whole-site result when the menu shows the site; each row then says where the part was found.
+function diffMenu(parts, nl, open, site) {
+  const side = el('div', 'diff-menu'), stick = el('div', 'dm-stick'), head = el('div', 'dm-head'), tags = el('div', 'dm-tags'), list = el('nav', 'dm-list');
+  const n = s => parts.filter(p => p.state === s).length;
+  head.append(el('h2', '', site ? 'Whole site' : 'Differences'), el('p', '', site ? `${plural(site.compared, 'page')} compared${site.solo ? ', the new server on its own' : ' on both servers'}` : nl ? `${plural(parts.length, 'part')}, the new server on its own` : `${plural(parts.length, 'part')} compared on both servers`));
+  tags.append(el('span', 'stag is-fix', `${n('fix')} to fix`), el('span', 'stag is-check', `${n('check')} to check`), el('span', 'stag is-info', `${n('info')} to read`));
+  list.setAttribute('aria-label', 'Parts of the comparison');
+  const row = (p, tag) => {
+    const b = el('button', 'dm-row'), grow = el('span', 'settings-grow'), c = el('span', 'chevron', '›');
+    b.type = 'button'; b.dataset.part = p.id; if (diffPart === p.id) b.setAttribute('aria-current', 'true'); b.onclick = () => open(p.id);
+    grow.append(el('strong', '', p.name), el('small', '', site && p.where ? p.where : p.what)); c.setAttribute('aria-hidden', 'true'); b.append(partTile(p), grow, ...(tag ? [tag] : []), c); return b;
+  };
+  list.append(row({ id: 'overview', name: 'Overview', what: 'The verdict and the worst points' }));
+  for (const group of new Set(parts.map(p => p.group))) { list.append(el('span', 'lbl', group)); for (const p of parts.filter(x => x.group === group)) list.append(row(p, stateTag(p))); }
+  stick.append(head, tags, list); side.append(stick); return side;
+}
+// One part in a list of the Overview. The card is a container: its name is the button (a short name for a screen
+// reader), a click anywhere on the card opens the part as well.
+function partCard(p, withTops, open, small) {
+  const card = el('div', 'ov-part'), top = el('div', 'ov-head'), grow = el('span', 'settings-grow'), name = el('strong', ''), go = el('button', 'ov-open', p.name), line = el('small', '', small), c = el('span', 'chevron', '›');
+  go.type = 'button'; go.setAttribute('aria-label', `${p.name}: ${p.tag}. Open this part`); card.dataset.part = p.id; card.onclick = () => open(p.id); line.title = small; c.setAttribute('aria-hidden', 'true');
+  name.append(go); if (p.addon) name.append(' ', el('span', 'atag', 'Add-on'));
+  grow.append(name, line); top.append(partTile(p), grow, stateTag(p), c); card.append(top);
+  // A point that only needs a look keeps its amber dot inside a part that needs a fix.
+  if (withTops && p.tops.length) { const ul = el('ul', `ov-tops is-${p.state}`); p.tops.forEach((t, i) => ul.append(el('li', p.all?.[i]?.state === 'check' ? 'is-check' : '', t))); if (p.more) ul.append(el('li', 'rest', `and ${p.more} more`)); card.append(ul); }
+  return card;
+}
+const verdictBox = v => {
+  const box = el('div', `box sv dverdict${v.tone ? ` ${v.tone}` : ''}`), text = el('div', '');
+  text.append(el('div', 'sv-title', v.title), el('div', 'sv-fx', v.text)); for (const note of v.notes || []) text.append(el('div', 'sv-lim', note)); box.append(text); return box;
+};
+const stepList = (title, hint, parts, withTops, open, small = p => p.line) => {
+  const h = el('div', 'dstep'), grid = el('div', `dcard ov-grid${withTops ? '' : ' c3'}`); h.append(el('b', '', title), el('span', 'lbl', hint));
+  for (const p of parts) grid.append(partCard(p, withTops, open, small(p)));
+  return [h, grid];
+};
+// Overview: sorted by what to do, not by where it comes from. A step without parts is not shown. A part without a
+// result is not "nothing to do": it has its own last step, with why and how to run it again.
+function overviewPage(model, nl, open) {
+  const out = [verdictBox(diffVerdict(model))], waits = p => p.busy || p.missing;
+  for (const [title, hint, parts, withTops] of [['Fix before the switch', 'these break the site or put it at risk', model.parts.filter(p => p.state === 'fix'), true], ['Look at once', nl ? 'may be fine, worth a look' : 'may be fine, but different from Live', model.parts.filter(p => p.state === 'check'), true],
+    ['Nothing to do', 'shown so you can look it up', model.parts.filter(p => ['info', 'ok', 'none'].includes(p.state) && !waits(p)), false], ['No result yet', 'not measured, still running or failed', model.parts.filter(waits), true]]) if (parts.length) out.push(...stepList(title, hint, parts, withTops, open));
+  return out;
+}
+/* Whole site (1.4.0-beta.4): one level above the page. Main compares the pages and folds them (site-scope.cjs); this draws it. */
+// The parts for the site, in menu order. Files and Speed need a real page load: they are the ones of the open page.
+function siteParts(site, model) {
+  // onPage: measured in the real load of the open page, not on every page of the run.
+  const here = id => { const p = model.parts.find(x => x.id === id); return p && { ...p, where: 'Measured on the page you opened', onPage: true }; };
+  return ['domains', 'files', 'html', 'headers', 'speed', 'checks'].map(id => (id === 'files' || id === 'speed' ? here(id) : site.parts.find(p => p.id === id))).concat(site.parts.filter(p => p.addon)).filter(Boolean);
+}
+const siteTime = ms => (ms >= 60000 ? `${Math.floor(ms / 60000)} min ${Math.round((ms % 60000) / 1000)} s` : `${Math.max(1, Math.round(ms / 1000))} s`);
+// Never green without pages, without the home page (the checks for the whole site and the add-ons that scan once run
+// there), with a part that has no result, or after a run that stopped.
+function siteVerdict(site, parts) {
+  const n = site.compared, fix = parts.filter(p => p.wideState === 'fix'), check = parts.filter(p => p.wideState === 'check'), here = parts.filter(p => p.onPage && p.state === 'fix'), ownFix = site.own.filter(p => p.state === 'fix').length, missing = parts.filter(p => p.missing);
+  const pages = `${ownFix} of ${plural(n, 'page')} ${ownFix === 1 ? 'has' : 'have'} a problem of ${ownFix === 1 ? 'its' : 'their'} own`, names = list => list.map(p => p.name).join(', ');
+  if (site.status === 'listing') return { tone: '', title: 'Looking for the pages of this site', text: 'Reading the sitemap of the site.' };
+  if (site.status === 'running') return { tone: '', title: `Comparing ${Math.min(site.total, site.done + 1)} of ${plural(site.total, 'page')}`, text: `Two pages at a time, so the servers are not loaded. ${site.done ? `What ${plural(site.done, 'page')} said so far is below.` : ''}` };
+  if (site.status === 'nolist') return { tone: '', title: site.source ? 'No pages to compare' : 'No sitemap found', text: site.error };
+  if (site.status === 'error') return { tone: '', title: 'The run stopped', text: site.error, notes: n ? [`What ${plural(n, 'page')} said is below. It is not the whole site.`] : [] };
+  if (site.status === 'cancelled' && !site.total) return { tone: '', title: 'Stopped before the page list was read', text: 'Nothing was compared. Compare again starts over.' };
+  if (site.status === 'cancelled') return { tone: '', title: `Stopped after ${n} of ${plural(site.total, 'page')}`, text: `${n ? `What ${n === 1 ? 'that page' : `those ${n} pages`} said is below. ` : ''}Compare again runs all pages.` };
+  if (!n) return { tone: '', title: 'No page was compared', text: 'Every page of the list was skipped or could not be fetched, so there is no result for this site.' };
+  const home = site.homeSkipped ? ' The home page was skipped, so the checks for the whole site and the add-ons that scan once did not run.' : '', left = `${missing.length ? ` No result for: ${names(missing)}.` : ''}${home}`;
+  if (fix.length || ownFix || here.length) return { tone: 'worse', title: 'Not ready for the switch', text: `${fix.length ? `${plural(fix.length, 'part')} ${fix.length === 1 ? 'needs' : 'need'} a fix for the whole site` : 'Nothing to fix for the whole site'}${ownFix ? `, and ${pages}` : ''}.${here.length ? ` On the page you opened: ${names(here)}.` : ''}${left}` };
+  if (missing.length || site.homeSkipped) return { tone: '', title: 'The result is incomplete', text: `${left.trim()} Nothing to fix in what was compared.` };
+  return { tone: 'better', title: 'Nothing to fix before the switch', text: `${plural(n, 'page')} compared. ${check.length ? `Worth a look once: ${names(check)}.` : 'Every part is fine.'}${site.own.length ? ` ${plural(site.own.length, 'page')} to look at below.` : ''}` };
+}
+function siteOverview(site, parts, open) {
+  const box = verdictBox(siteVerdict(site, parts)), out = [box], busy = site.status === 'listing' || site.status === 'running';
+  if (busy) { const stop = fbtn(site.stopping ? 'Stopping…' : 'Cancel', 'stop', 'Stop comparing. What was compared stays.', () => command('site-cancel')); stop.disabled = Boolean(site.stopping); stop.dataset.keep = 'cancel'; const meta = el('div', 'sv-meta'); meta.append(stop); box.append(meta); }
+  if (site.status === 'nolist' || !site.compared) return out;
+  // In the steps for the site a part shows what is site-wide; its menu row shows the worst of everything.
+  const forSite = p => ({ ...p, state: p.wideState, tag: p.wideTag, where: p.wideWhere });
+  for (const [title, hint, list, small] of [['Fix once for the whole site', 'the same on every page, so one fix counts for all', parts.filter(p => p.wideState === 'fix').map(forSite), p => `${p.where} · ${p.line}`],
+    ['Look at once', site.solo ? 'may be fine, worth a look' : 'may be fine, but different from Live', parts.filter(p => p.wideState === 'check').map(forSite), p => `${p.where} · ${p.line}`],
+    ['On the page you opened', 'files and speed need a real page load, so they are measured there only', parts.filter(p => p.onPage && ['fix', 'check'].includes(p.state)), p => p.line],
+    ['No result yet', 'not measured, still running or failed', parts.filter(p => p.busy || p.missing), p => p.line]]) if (list.length) out.push(...stepList(title, hint, list, true, open, small));
+  const h = el('div', 'dstep'), pages = el('div', 'dcard ov-pages'), all = site.own.length + site.rest.length;
+  h.append(el('b', '', 'Pages with a problem of their own'), el('span', 'lbl', `${site.own.length} of ${plural(all, 'page')}`));
+  const row = p => {
+    const b = el('button', 'ov-page'), name = el('span', ''), why = el('span', 'why', p.text), c = el('span', 'chevron', '›');
+    b.type = 'button'; b.dataset.page = p.path; b.dataset.keep = `page:${p.path}`; b.title = `Open ${p.path} and compare it on its own`; name.append(el('strong', '', p.path), el('small', '', p.title)); why.title = p.text; c.setAttribute('aria-hidden', 'true');
+    b.append(name, why); if (p.tag) { const t = stateTag(p); t.classList.add('ptag'); b.append(t); } b.append(c);
+    b.onclick = async () => { if ((await command('site-open', p.url)).ok) { diffScope = 'page'; diffPart = 'overview'; diffKey = ''; $('canvas').scrollTop = 0; } };
+    return b;
+  };
+  for (const p of site.own) pages.append(row(p));
+  if (site.rest.length) {
+    const more = el('button', 'ov-rest'); more.type = 'button'; more.dataset.keep = 'rest'; more.setAttribute('aria-expanded', String(siteShowRest));
+    more.append(el('span', '', site.rest.length === 1 ? '1 page has nothing of its own' : `${site.rest.length} pages have nothing of their own`), el('span', 'act', siteShowRest ? 'Hide' : 'Show all'));
+    more.onclick = () => { siteShowRest = !siteShowRest; diffKey = ''; renderDifferences(state.tabs.find(t => t.id === state.activeId), currentView()); };
+    pages.append(more); if (siteShowRest) for (const p of site.rest) pages.append(row(p));
+  }
+  if (site.own.length || site.rest.length) out.push(h, pages);
+  return out;
+}
+// Under the header: This page or Whole site, and what belongs to that choice (where the pages came from, the way back).
+function scopeRow(site, r, tab) {
+  const row = el('div', 'dscope-row'), seg = el('div', 'dscope'), inSite = diffScope === 'site' && Boolean(site), redraw = () => { diffKey = ''; renderDifferences(tab, currentView()); };
+  seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'What to compare');
+  const pick = (id, label, go) => { const b = el('button', '', label); b.type = 'button'; b.dataset.scope = id; b.dataset.keep = `scope:${id}`; b.setAttribute('aria-pressed', String((id === 'site') === inSite)); b.onclick = go; seg.append(b); };
+  pick('page', 'This page', () => { diffScope = 'page'; diffPart = 'overview'; redraw(); });
+  pick('site', site?.total ? `Whole site · ${site.total}` : 'Whole site', async () => { if (!site && !(await command('site-run', {})).ok) return; diffScope = 'site'; diffPart = 'overview'; redraw(); });
+  row.append(seg);
+  if (inSite) {
+    const from = site.status === 'listing' ? 'looking for the sitemap' : site.status === 'nolist' ? (site.source ? `nothing to compare in ${site.source}` : 'no sitemap') : `${plural(site.total, 'page')} from ${site.source}${site.running ? '' : ` · took ${siteTime(site.tookMs)}`}`;
+    const choose = el('button', 'dlink', 'Choose pages'); choose.type = 'button'; choose.dataset.keep = 'choose'; choose.setAttribute('aria-expanded', String(siteChoose)); choose.onclick = () => { siteChoose = !siteChoose; redraw(); };
+    row.append(el('span', 'lbl', from), choose);
+    for (const note of site.notes || []) row.append(el('span', 'lbl dnote', note));
+    if (siteChoose || site.status === 'nolist') row.append(siteChooser(site, redraw));
+  } else if (site) {
+    const back = el('button', 'dlink', `← Whole site, ${plural(site.total, 'page')}`); back.type = 'button'; back.dataset.keep = 'back'; back.onclick = () => { diffScope = 'site'; diffPart = 'overview'; redraw(); };
+    let path = ''; try { const u = new URL(r.url); path = decodeURI(u.pathname) + u.search; } catch {}
+    row.append(back, el('span', 'badge', path));
+  }
+  return row;
+}
+// Choose pages: a number of pages from the sitemap, or a list of addresses of this site. The view is drawn again after
+// every page of a run: what was typed lives in siteListDraft, so it is still there.
+function siteChooser(site, redraw) {
+  const box = el('div', 'dchoose'), counts = el('div', 'dchoose-row'), own = el('div', 'dchoose-row'), list = el('textarea', ''), go = fbtn('Compare these pages', 'reload', '', null);
+  const start = async data => { if ((await command('site-run', data)).ok) { siteChoose = false; redraw(); } };
+  counts.append(el('span', '', 'From the sitemap:'));
+  for (const n of site.choices) { const b = fbtn(`${n} pages`, '', `Compare the first ${n} pages of the sitemap`, () => start({ limit: n })); b.dataset.keep = `count:${n}`; if (n === site.wanted && site.source !== 'your list') b.setAttribute('aria-pressed', 'true'); counts.append(b); }
+  list.rows = 4; list.spellcheck = false; list.placeholder = '/contact/\n/shop/cakes/'; list.dataset.keep = 'list'; list.value = siteListDraft; list.oninput = () => { siteListDraft = list.value; };
+  list.setAttribute('aria-label', `Your own list of addresses of this site, one per line, at most ${site.max}`);
+  go.dataset.keep = 'go'; go.onclick = () => (list.value.trim() ? start({ list: list.value }) : list.focus());
+  own.append(el('span', '', `Or your own list, one address per line, at most ${site.max}:`), list, go);
+  box.append(counts, own); return box;
+}
+// Which pages a part of the site was found on: every finding with its pages, so what is said once can still be traced.
+function affectedPages(part) {
+  const d = document.createElement('details'), sum = document.createElement('summary'), list = el('ul', '');
+  d.className = 'daffected'; d.open = siteAffectedOpen; d.ontoggle = () => { siteAffectedOpen = d.open; };
+  sum.dataset.keep = 'affected'; sum.textContent = `Affected pages, per finding (${part.found.length})`;
+  for (const f of part.found) {
+    const li = el('li', `is-${f.state}`), where = f.once ? 'asked once for the site' : f.pages.join('  ');
+    li.append(el('b', '', f.text || (f.state === 'info' ? `${part.name} differs` : part.name)), el('span', f.once ? 'once' : 'm', where)); list.append(li);
+  }
+  d.append(sum, list); return d;
+}
+// One part: its head and below it the panel of that part. inSite: the part as the whole site has it; the panel below
+// is the one of the page that is open, and the note says so.
+function partPage(p, r, nl, open, inSite) {
+  const back = el('button', 'dback', '← Overview'), card = el('div', 'dcard'), ch = el('div', 'dch'), scroll = el('div', `dscroll ${p.addon ? 'checks' : p.id}`);
+  back.type = 'button'; back.onclick = () => open('overview');
+  ch.append(partTile(p), el('b', '', p.name)); if (p.addon) ch.append(el('span', 'atag', 'Add-on'));
+  ch.append(el('span', 'lbl', p.what), stateTag(inSite || p), el('span', 'lbl', p.addon ? (p.by ? `by ${p.by}` : 'add-on') : 'built in'));
+  if (p.id === 'files') {
     const reload = el('button', 'fbtn'); reload.type = 'button'; reload.append(icon('reload'), 'Reload both'); reload.title = 'Reload Hostfile and Live without the cache and measure again';
     reload.onclick = () => command('files-reload');
     const copy = el('button', 'fbtn'); copy.type = 'button'; copy.append(icon('copy'), 'Copy list'); copy.title = 'Copy this list as plain text, for a ticket';
     copy.onclick = async () => { const result = await command('files-copy'); if (result.ok && result.notice) toast(result.notice); };
     ch.append(reload, copy);
   }
-  // A sub tab with problems shows a red count.
-  const counts = tabCounts();
-  for (const [id, label] of [['domains', 'Domains'], ['files', 'Files'], ['speed', 'Speed'], ['checks', 'Checks'], ['html', 'HTML'], ['headers', 'Headers']]) {
-    const b = el('button', '', label); b.type = 'button'; b.setAttribute('aria-pressed', String(diffTab === id)); b.onclick = () => { diffTab = id; renderDifferences(tab, currentView()); };
-    if (counts[id]) { b.append(el('span', 'tcount', String(counts[id]))); b.setAttribute('aria-label', `${label}, ${counts[id]} to look at`); }
-    tabs.append(b);
+  const notCompared = () => el('p', 'dempty', 'Not compared: Live has no page.'), chain = side => (r[side]?.redirects || []).map(x => x.location).join(' > ') || 'none';
+  // Status and redirects are not headers, but they are what the server sends with the page: they lead the table when they differ.
+  const sent = !r.hostfile?.ok || !r.live?.ok ? [] : [r.hostfile.status !== r.live.status && { name: 'HTTP status', hostfile: String(r.hostfile.status), live: String(r.live.status) }, chain('hostfile') !== chain('live') && { name: 'Redirects', hostfile: chain('hostfile'), live: chain('live') }].filter(Boolean);
+  scroll.append(p.addon ? addonPanel(state.addonTabs.find(a => a.id === p.addon)) : p.id === 'domains' ? domainTable(r.domains || [], nl) : p.id === 'files' ? filesPanel(state.files) : p.id === 'speed' ? speedPanel(state.speed) : p.id === 'checks' ? checksPanel(state.checks) : nl ? notCompared() : p.id === 'html' ? htmlLines(r.html?.hunks || r.html?.lines || []) : headerTable([...sent, ...(r.headers || [])]));
+  card.append(ch);
+  // What was not read cannot be in the table below: said above it.
+  if (p.id === 'domains') for (const point of p.all.filter(x => / page was not read to the end: /.test(x.text))) card.append(el('div', 'dnote-line dunread', `${point.text}. What comes after that is not in this list.`));
+  if (p.id === 'domains') for (const point of p.all.filter(x => / found only on (Hostfile|Live), inside text that a browser may still /.test(x.text))) card.append(el('div', 'dnote-line dunread', `${point.text}. It is not in this list.`));
+  if (inSite) {
+    let path = ''; try { path = decodeURI(new URL(r.url).pathname); } catch {}
+    card.append(el('div', 'dnote-line', `${inSite.where}. Shown here as found on the page that is open (${path}); a page that differs is listed under its own name.`));
+    if (inSite.found?.length) card.append(affectedPages(inSite));
   }
-  ch.append(tabs);
-  const scroll = el('div', ['files', 'speed', 'checks'].includes(diffTab) ? `dscroll ${diffTab}` : 'dscroll');
-  const notCompared = () => el('p', 'dempty', 'Not compared: Live has no page.');
-  scroll.append(diffTab === 'domains' ? domainTable(domains, nl) : diffTab === 'files' ? filesPanel(state.files) : diffTab === 'speed' ? speedPanel(state.speed) : diffTab === 'checks' ? checksPanel(state.checks) : nl ? notCompared() : diffTab === 'html' ? htmlLines(r.html?.hunks || r.html?.lines || []) : headerTable(headerDiffs));
-  box2.append(ch, scroll); main.append(head, kpis, box2);
-  const side = el('div', 'diff-side'); side.append(el('div', 'lbl', 'Findings'), el('h3', '', 'What stands out'));
-  // What failed to load comes first: it is what the user sees break. Then the checks and the speed.
-  // Why Live could not be reached comes before everything: the rest is judged on the new server alone.
-  const found = [...(state.files?.findings || []), ...pageFindings(r.findings)], allFindings = [...found.filter(f => f.calm), ...found.filter(f => !f.calm)];
-  if (!allFindings.length) side.append(el('div', 'finding', 'No notable differences found.'));
-  for (const f of allFindings) { const c = el('div', `finding${f.calm ? ' calm' : f.severity === 'high' ? ' high' : f.severity === 'both' ? ' both' : ''}`), t = el('div', 't'); t.append(icon(f.calm || f.severity === 'info' ? 'info' : 'alert'), f.calm ? keepNames(f.text) : el('b', '', f.title || f.text || '')); if (f.detail) c.append(t, el('p', '', f.detail)); else c.append(t); side.append(c); }
-  const ask = el('button', 'primary ask'); const img = document.createElement('img'); img.src = 'brand/claude.png'; img.alt = ''; ask.append(img, 'Ask Claude about these differences');
-  ask.onclick = async () => { const result = await command('differences-ask-claude'); if (result.ok && result.notice) toast(result.notice); };
-  side.append(ask, el('p', 'ask-hint', 'Sends this comparison to the Claude panel. Claude keeps working as it does now.'));
-  box.replaceChildren(main, side);
-}
-// The sub line can be cut off in a narrow window: the whole card text is in its tooltip.
-function filesCard(f, card) { const c = filesCardFor(f, card), [, big, sub] = c.children; c.title = `Files: ${big.textContent}, ${sub.textContent}`; return c; }
-function filesCardFor(f, card) {
-  if (!f?.measured) return card('Files', f?.measuring ? 'Measuring…' : 'Not measured', 'open Compare to measure', false);
-  const c = f.counts, extra = [c.old && `+${c.old} from old server`, c.both && `+${c.both} on both`].filter(Boolean).join(' · ');
-  if (c.only) return card('Files', `${c.only} failed`, extra || 'only on Hostfile', true);
-  if (c.old) return card('Files', `${c.old} from old server`, c.both ? `+${c.both} on both` : 'no domain rule for their host', true);
-  if (f.measuring) return card('Files', 'Measuring…', 'both servers', false);
-  if (c.both) return card('Files', `${c.both} on both`, 'not a migration difference', false);
-  return card('Files', 'All loaded', 'on both servers', false);
+  card.append(scroll); return [back, card];
 }
 function fileCell(row) {
   // Name and Open share one line; a long name is cut off, Open stays visible.
@@ -869,7 +1116,11 @@ function oldServerSection(f) {
 function filesPanel(f) {
   const wrap = el('div', '');
   if (!f) { wrap.append(el('p', 'dempty', 'Open a website in a Hostfile tab with a domain rule to measure its files.')); return wrap; }
-  if (!f.measured) wrap.append(el('p', 'dempty', 'Open Compare to measure files.'));
+  if (!f.measured && f.alone?.length) {
+    // Live was not loaded for this page: what failed on the new server while the tab loaded it.
+    wrap.append(el('p', 'fnote', 'Failed on the new server while this tab loaded the page. Open Compare to check them on Live: a file that fails there too is not a migration difference.'));
+    wrap.append(table(['File', 'Loaded as', 'Hostfile'], f.alone.map(row => [fileCell(row), row.type, fileStatus(row.hostfile, 'both')])));
+  } else if (!f.measured) wrap.append(el('p', 'dempty', f.measuring ? 'The page is loading…' : 'Every file loaded on the new server. Open Compare to measure Live as well.'));
   else if (!f.rows.length) wrap.append(el('p', 'dempty', f.measuring ? 'Measuring both servers…' : 'Every file loaded on both servers.'));
   else {
     const pills = { hostfile: () => pill('Only Hostfile', true), both: () => { const p = pill('On both'); p.classList.add('both'); return p; }, live: () => pill('Only Live') };
@@ -893,8 +1144,6 @@ function table(headers, rows, flags = []) {
   const body = document.createElement('tbody'); rows.forEach((cells, i) => { const tr = document.createElement('tr'); if (flags[i]) tr.className = 'flag'; for (const c of cells) { const td = document.createElement('td'); if (c instanceof Node) td.append(c); else td.textContent = c; tr.append(td); } body.append(tr); }); t.append(body); return t;
 }
 function dot(on) { return el('span', on ? 'y' : 'n0', on ? '●' : '·'); }
-// A host name such as northwind-bakery.test stays on one line instead of breaking at its hyphen.
-function keepNames(text) { const b = el('b', ''); String(text).split(/(\S*-\S*)/).forEach((part, i) => b.append(i % 2 ? el('span', 'nl-nw', part) : part)); return b; }
 function domainTable(domains, noLive) {
   if (!domains.length) return el('p', 'dempty', 'No external domains found.');
   // Without Live there is nothing to compare: the domains of the new server, without "only on" labels.

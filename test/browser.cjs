@@ -50,22 +50,42 @@ const { execFileSync } = require('node:child_process');
     assert.match(await ui.locator('#route-bar').getAttribute('title'), /migration\.invalid/);
     assert.match(await ui.locator('#route-bar').getAttribute('title'), /Rule 127\.0\.0\.1/i);
     assert.equal(await ui.locator('#connection-banners').count(), 0, 'old banners are gone');
+    // The app sends its own state after every event and every few seconds (the memory sample); that state would replace
+    // the ones this block puts in the window by hand. Hold the app's state messages back until the block is done.
+    const holdState = on => app.evaluate(({ BrowserWindow }, hold) => {
+      const wc = BrowserWindow.getAllWindows()[0].webContents;
+      if (hold && !wc.heldSend) { wc.heldSend = wc.send; wc.send = (channel, ...rest) => (channel === 'state' ? undefined : wc.heldSend.call(wc, channel, ...rest)); }
+      else if (!hold && wc.heldSend) { wc.send = wc.heldSend; delete wc.heldSend; }
+    }, on);
+    await holdState(true);
+    try {
     await ui.evaluate(() => render({ ...state, update: { ...state.update, status: 'available', version: '9.9.9', canInstall: false } }));
     assert.equal((await ui.locator('#update-notice').innerText()).trim(), 'Update 9.9.9 available');
     assert.equal(await ui.evaluate(() => document.getElementById('open-release').hidden), false, 'manual update shows the download page button');
     await ui.evaluate(() => render({ ...state, update: { ...state.update, status: 'idle' } }));
     assert.equal(await ui.locator('#update-notice').isVisible(), false);
     const report = { url: 'http://migration.invalid/', comparedAt: Date.now(), hostfile: { ip: '127.0.0.1', status: 200, ms: 12 }, live: { ip: '203.0.113.9', status: 200, ms: 1300 }, domains: [{ host: 'evil.example', hostfile: false, live: true, types: ['script'] }, { host: 'cdn.example', hostfile: true, live: true, types: ['image'] }], html: { changedLines: 1, lines: [{ side: 'both', text: '<body>' }, { side: 'live', text: '<script>alert(1)</script><img src=x onerror=alert(2)>' }] }, headers: [{ name: 'server', hostfile: 'nginx', live: 'LiteSpeed' }], findings: [{ severity: 'high', title: 'Unknown script <b>only</b> on Live', detail: 'evil.example' }] };
-    await ui.evaluate(r => render({ ...state, view: 'differences', differences: { status: 'done', report: r } }), report);
+    // An add-on whose name and maker look like markup, and whose id is a property every object has.
+    const odd = { id: 'constructor', name: '<b>Odd</b>', by: '<img src=x onerror=alert(3)>', scope: 'page', label: 'Odd', sub: 'odd add-on', status: 'idle', report: null, error: '' };
+    await ui.evaluate(([r, a]) => render({ ...state, view: 'differences', differences: { status: 'done', report: r }, addonTabs: [a] }), [report, odd]);
     await ui.locator('#differences').getByText('External domains').first().waitFor();
     assert.equal(await ui.locator('#view-differences').getAttribute('aria-pressed'), 'true');
-    assert.match(await ui.locator('#differences').innerText(), /1 only on Live/);
-    assert.equal(await ui.locator('#differences .finding.high b').innerText(), 'Unknown script <b>only</b> on Live', 'report text is rendered as text');
+    assert.equal(await ui.locator('#differences .dm-row[data-part=domains] .stag.is-check').innerText(), '1 missing');
+    assert.equal(await ui.locator('#differences .dverdict.worse .sv-fx').innerText(), 'Unknown script <b>only</b> on Live No result for: Files, Speed, Checks, <b>Odd</b>.', 'report text is rendered as text');
+    assert.deepEqual(await ui.locator('#differences .dstep b').allInnerTexts(), ['Look at once', 'Nothing to do', 'No result yet'], 'parts without a result have their own step');
+    assert.deepEqual(await ui.locator('#differences .dscope button').allInnerTexts(), ['This page', 'Whole site']);
     assert.equal(await ui.locator('#differences b b, #differences img[onerror]').count(), 0, 'no markup injected from the report');
-    await ui.locator('#differences .subtabs button', { hasText: 'HTML' }).click();
+    assert.equal(await ui.locator('#differences .dm-row[data-part="addon:constructor"] strong').innerText(), '<b>Odd</b>');
+    await ui.locator('#differences .dm-row[data-part="addon:constructor"]').click();
+    assert.equal((await ui.locator('#differences .dch').innerText()).replace(/\s+/g, ' ').toLowerCase(), '<b>odd</b> add-on odd add-on not run by <img src=x onerror=alert(3)>', 'name and maker of an add-on are text');
+    assert.equal(await ui.locator('#differences b b, #differences img[onerror], #differences .dch img').count(), 0);
+    assert.equal(await ui.locator('#differences .dm-row[data-part="addon:constructor"] .ptile').getAttribute('style'), null, 'an unknown add-on has the neutral tile');
+    await ui.locator('#differences .dm-row[data-part=html]').click();
     assert.match(await ui.locator('#differences .code .live').innerText(), /alert\(1\)/);
     await ui.evaluate(() => render({ ...state, view: 'single', differences: { status: 'idle' } }));
     assert.equal(await ui.locator('#differences').isVisible(), false);
+    } finally { await holdState(false); } // the app's own state again, also when an assertion above failed
+    await ui.evaluate(async () => render((await window.browser.command('state')).state));
     await ui.getByRole('button', { name: 'Settings', exact: true }).click();
     await ui.getByRole('heading', { name: 'Settings', exact: true }).waitFor();
     await ui.locator('#settings-menu [data-settings-category="browsing"]').click();

@@ -212,3 +212,19 @@ test('SSL exceptions default off and legacy global bypass migrates only existing
     migrated.rules.push(validateRules([{domain:'new.test',ip:'127.0.0.1'}])[0]);saveSettings(file,migrated);assert.deepEqual(readSettings(file),migrated);
   } finally {fs.rmSync(dir,{recursive:true,force:true})}
 });
+
+test('zoom moves through the steps of Chrome and stays between 50 and 300 %', () => {
+  const { ZOOM_STEPS, zoomStep, zoomPreset, zoomLabel } = require('../src/core.cjs');
+  assert.deepEqual(ZOOM_STEPS.map(zoomLabel), ['50%', '67%', '75%', '80%', '90%', '100%', '110%', '125%', '150%', '175%', '200%', '250%', '300%']);
+  let up = 1; const ups = []; for (let i = 0; i < 9; i++) ups.push(zoomLabel(up = zoomStep(up, 1)));
+  assert.deepEqual(ups, ['110%', '125%', '150%', '175%', '200%', '250%', '300%', '300%', '300%'], 'up to 300 % and no further');
+  let down = 1; const downs = []; for (let i = 0; i < 7; i++) downs.push(zoomLabel(down = zoomStep(down, -1)));
+  assert.deepEqual(downs, ['90%', '80%', '75%', '67%', '50%', '50%', '50%'], 'down to 50 % and no further');
+  assert.equal(zoomStep(1.2, 1), 1.25, 'between two steps: the next one up'); assert.equal(zoomStep(1.2, -1), 1.1, 'and the next one down');
+  assert.equal(zoomStep(0.67, 1), 0.75); assert.equal(zoomStep(0.6666667, -1), 0.5, 'a factor read back with rounding still counts as its step');
+  assert.equal(zoomStep(9, 1), 3); assert.equal(zoomStep(9, -1), 3); assert.equal(zoomStep(0.1, -1), 0.5); assert.equal(zoomStep(0.1, 1), 0.5, 'out of range comes back inside');
+  assert.equal(zoomStep(1.5, 0), 1, 'reset'); assert.equal(zoomStep(undefined, 1), 1.1); assert.equal(zoomStep(Number.NaN, -1), 0.9); assert.equal(zoomStep(-2, 1), 1.1, 'nonsense counts as 100 %');
+  assert.equal(zoomPreset('125'), 1.25); assert.equal(zoomPreset(67), 0.67); assert.equal(zoomPreset(100), 1);
+  assert.equal(zoomPreset(120), null); assert.equal(zoomPreset('x'), null); assert.equal(zoomPreset(0), null);
+  assert.equal(zoomLabel(1.25), '125%'); assert.equal(zoomLabel(undefined), '100%'); assert.equal(zoomLabel(0.67), '67%');
+});

@@ -47,24 +47,26 @@ function tilePlan(cssHeight, dpr, cssWidth = 1440, panes = 1) {
   return { width, height: total, cut: height > total || wanted > width, tiles };
 }
 
-// "Dioptra example.com compare 2026-11-08 at 14.32.png", like the screenshots of macOS. Only safe characters from the host.
-function fileName(host, what, date = new Date()) {
+// "Dioptra example.com compare 2026-11-08 at 14.32.jpg", like the screenshots of macOS. Only safe characters from the host.
+// Sharp and Small are JPEG, Original (and anything unknown) PNG: the same choice as composeShot in shot-compose.js.
+const extension = quality => (quality === 'sharp' || quality === 'small' ? 'jpg' : 'png');
+function fileName(host, what, date = new Date(), quality = 'original') {
   const safe = String(host || '').toLowerCase().replace(/[^a-z0-9.-]/g, '').replace(/^[.-]+|[.-]+$/g, '').slice(0, 80) || 'page';
   const two = n => String(n).padStart(2, '0');
   const day = `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}`, time = `${two(date.getHours())}.${two(date.getMinutes())}`;
-  return `Dioptra ${safe} ${what} ${day} at ${time}.png`;
+  return `Dioptra ${safe} ${what} ${day} at ${time}.${extension(quality)}`;
 }
-// The first free name in the folder: "name.png", "name (2).png", ...
+// The first free name in the folder: "name.jpg", "name (2).jpg", ... with the extension the name came with.
 function freeName(name, exists) {
   if (!exists(name)) return name;
-  const base = name.replace(/\.png$/, '');
-  for (let n = 2; n < 1000; n++) { const next = `${base} (${n}).png`; if (!exists(next)) return next; }
+  const [, base, ext] = name.match(/^(.*?)(\.(?:png|jpg))?$/s);
+  for (let n = 2; n < 1000; n++) { const next = `${base} (${n})${ext || ''}`; if (!exists(next)) return next; }
   throw new Error('No free file name in Downloads.');
 }
-function savePng(dir, name, png) {
+function saveShot(dir, name, bytes) {
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, freeName(name, n => fs.existsSync(path.join(dir, n))));
-  fs.writeFileSync(file, png, { flag: 'wx' });
+  fs.writeFileSync(file, bytes, { flag: 'wx' });
   return file;
 }
 // Electron 45 has only the async clipboard: write() with ClipboardItem (writeImage is gone).
@@ -103,7 +105,8 @@ async function captureFull(wc, start, alive, panes) {
   try {
     await inPage(wc, scrollTo(0, 0), alive);
     const { cssContentSize } = await send('Page.getLayoutMetrics');
-    const plan = tilePlan(cssContentSize.height, start.dpr, cssContentSize.width, panes), tiles = [];
+    // The capture comes back at the scale of the screen; devicePixelRatio also holds the zoom of the tab.
+    const plan = tilePlan(cssContentSize.height, start.dpr / (wc.getZoomFactor() || 1), cssContentSize.width, panes), tiles = [];
     for (const t of plan.tiles) {
       if (!alive()) throw new Cancelled();
       const { data } = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: 0, y: t.y, width: plan.width, height: t.h, scale: 1 } });
@@ -141,4 +144,4 @@ async function capturePanes(panes, { full, alive, progress }) {
   return panes.map((p, i) => ({ live: p.live, ip: p.ip, via: p.via, ptr: p.ptr, ...shots[i] }));
 }
 
-module.exports = { WORLD, MAX_SIDE, MAX_WIDTH_CSS, PIXEL_BUDGET, PROBE, tilePlan, fileName, freeName, savePng, copyPng, probe, capturePanes, Cancelled };
+module.exports = { WORLD, MAX_SIDE, MAX_WIDTH_CSS, PIXEL_BUDGET, PROBE, tilePlan, fileName, freeName, saveShot, copyPng, probe, capturePanes, Cancelled };

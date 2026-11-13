@@ -141,4 +141,15 @@ function cancelNavigation(wc, timeout = 1500) {
     try { wc.stop(); stopped(); } catch (error) { finish(error); }
   });
 }
-module.exports = { ptrName, certSummary, daysLeft, ROUTE_BAR_HEIGHT, FOOTER_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, compareLayout, compareShare, validateRules, expandRules, resolverRules, validServers, parseServers, MAX_SERVER_CSV, navigationURL, readSettings, saveSettings, cancelNavigation };
+// Zoom of a tab: the steps of Chrome, as factors. zoomStep goes one step up (+1) or down (-1) from any factor, also from one
+// between two steps, and stays within 50 to 300 %; 0 is back to 100 %. zoomPreset takes only a step ("125" from the card).
+const ZOOM_STEPS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+function zoomStep(factor, direction) {
+  const now = Number.isFinite(factor) && factor > 0 ? factor : 1;
+  if (direction > 0) return ZOOM_STEPS.find(step => step > now + 0.001) ?? ZOOM_STEPS.at(-1);
+  if (direction < 0) return ZOOM_STEPS.findLast(step => step < now - 0.001) ?? ZOOM_STEPS[0];
+  return 1;
+}
+const zoomPreset = percent => ZOOM_STEPS.find(step => Math.round(step * 100) === Number(percent)) ?? null;
+const zoomLabel = factor => `${Math.round((Number.isFinite(factor) && factor > 0 ? factor : 1) * 100)}%`;
+module.exports = { ptrName, certSummary, daysLeft, ROUTE_BAR_HEIGHT, FOOTER_HEIGHT, DEFAULT_UPDATE_FEED, RELEASE_PAGE, devtoolsLayout, compareLayout, compareShare, validateRules, expandRules, resolverRules, validServers, parseServers, MAX_SERVER_CSV, navigationURL, readSettings, saveSettings, cancelNavigation, ZOOM_STEPS, zoomStep, zoomPreset, zoomLabel };

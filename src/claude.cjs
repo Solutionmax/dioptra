@@ -226,6 +226,7 @@ function createClaude({ session, authSession, window, tabs, current, newTab, act
     wc.on('did-start-navigation', (_e,url,inPlace,main) => { if (main && !inPlace) send('webNavigation.onBeforeNavigate',{ tabId:wc.id, frameId:0, url, timeStamp:Date.now() }); });
     wc.on('did-navigate', (_e,url) => send('webNavigation.onCommitted',{ tabId:wc.id, frameId:0, url, timeStamp:Date.now(), transitionType:'link', transitionQualifiers:[] }));
     wc.on('did-finish-load', () => send('webNavigation.onCompleted',{ tabId:wc.id, frameId:0, url:wc.getURL(), timeStamp:Date.now() }));
+    wc.on('did-fail-load', (_e,_code,description,url,main) => { if (main) send('webNavigation.onErrorOccurred',{ tabId:wc.id, frameId:0, url, error:'net::'+description, timeStamp:Date.now() }); });
     for (const event of ['did-navigate','did-stop-loading']) wc.on(event, () => { if (!wc.isDestroyed()) send('tabs.onUpdated', wc.id, { url: tab.url, status: tab.loading ? 'loading' : 'complete' }, info(tab)); });
     const id = wc.id;
     wc.once('destroyed', () => { attached.delete(id); send('tabs.onRemoved', id, { windowId, isWindowClosing: window.isDestroyed() }); });

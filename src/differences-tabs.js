@@ -1,4 +1,4 @@
-/* Speed and Checks tabs of Differences (1.2). Loaded just before renderer.js; its functions run later and use the helpers
+/* The Speed, Checks and add-on panels of Differences (1.2). Loaded just before renderer.js; its functions run later and use the helpers
    of renderer.js (el, icon, table, command, toast, state, diffKey).
    Main measures and checks; this only draws what state.speed and state.checks hold. All text goes in with textContent. */
 function fbtn(label, iconName, title, onclick) {
@@ -10,20 +10,10 @@ const sideBadge = side => { const wrap = el('span', side); wrap.append(el('span'
 function secHead(label, muted, extra) { const h = el('div', 'sec-h'); h.append(el('span', 'lbl', label)); if (muted) h.append(el('span', 'muted', muted)); if (extra) h.append(extra); return h; }
 function waitState(title, text) { const n = el('div', 'dstate small'); n.append(el('div', 'spinner'), el('h2', '', title), el('p', '', text)); return n; }
 
-// Sub tab counts: problems that tab shows (Files: files that fail only on Hostfile).
-function tabCounts() {
-  const sp = state.speed?.status === 'done' ? state.speed.report : null, ck = state.checks?.status === 'done' ? state.checks.report : null;
-  return { files: state.files?.measured ? state.files.counts.only : 0, speed: sp ? sp.findings.length : 0, checks: ck ? ck.counts.problems : 0 };
-}
+// What the parts draw from. The load counter only counts while Speed is open: else every load would draw the whole view again.
 function pageTabsKey() {
   const s = state.speed, c = state.checks;
-  return [s && [s.status, s.error, s.report?.measuredAt, s.progress?.done], c && [c.status, c.error, c.url, c.report && JSON.stringify(c.report.counts) + c.report.groups.map(g => g.items.map(i => i.id + i.title).join()).join()], checksShowPassed];
-}
-// Findings of Speed and Checks replace the two older ones that said less.
-function pageFindings(reportFindings) {
-  const sp = state.speed?.status === 'done' ? state.speed.report : null, ck = state.checks?.status === 'done' ? state.checks.report : null;
-  const replaced = f => (sp && /responded much slower/.test(f.text)) || (sp?.why.some(w => w.id === 'cache') && /^Cache headers differ/.test(f.text));
-  return [...(ck?.findings || []), ...(sp?.findings || []), ...(reportFindings || []).filter(f => !replaced(f))];
+  return [s && [s.status, s.error, s.report?.measuredAt, diffPart === 'speed' && s.progress?.done], c && [c.status, c.error, c.url, c.report && JSON.stringify(c.report.counts) + c.report.groups.map(g => g.items.map(i => i.id + i.title).join()).join()], checksShowPassed, (state.addonTabs || []).map(a => [a.id, a.name, a.label, a.sub, a.by, a.limited, a.status, a.error, a.report && JSON.stringify(a.report)])];
 }
 
 /* Live could not be reached (1.2.0-beta.3): a calm note with the reason, then the new server on its own. */
@@ -264,4 +254,45 @@ function passedBox(passed) {
   box.append(line);
   if (checksShowPassed) { const t = table(['Check', 'Hostfile', 'Live'], passed.map(p => [p.name, p.hostfile, p.live])); t.className = 'cpass-list'; box.append(t); }
   return box;
+}
+
+/* Add-on panels (1.4): an add-on scans and returns a report; Dioptra draws it like Checks. All text goes in with textContent. */
+function addonPanel(a) {
+  const wrap = el('div', 'ck2 addon-panel');
+  if (!a || a.status === 'idle') { wrap.append(el('p', 'dempty', 'The scan runs after the comparison. Use Compare again to run it.')); return wrap; }
+  if (a.status === 'running') { wrap.append(waitState(`${a.name} is scanning`, 'The page, what it loads and what search engines get.')); return wrap; }
+  if (a.status === 'error' || !a.report) { const n = el('div', 'dstate small'); n.append(el('h2', '', 'The scan could not run'), el('code', '', a.error || 'No result.')); wrap.append(n); return wrap; }
+  const r = a.report, sum = el('div', 'box cs'), n = el('div', ''), big = el('div', 'cs-n'), chips = el('div', 'cs-chips');
+  // Dioptra refused some of its requests (too many to this site in a short time): the scan did not see everything.
+  if (a.limited) wrap.append(el('div', 'sec-note limited', 'This scan was cut short: Dioptra stopped asking the site because too many requests went to it in a short time. What is below is what it saw; compare again in a few minutes for the rest.'));
+  r.summary.forEach((s, i) => { if (i) big.append(el('span', 'sep')); big.append(el('span', s.tone, s.text)); });
+  n.append(big, el('div', 'cs-sub', r.sub));
+  r.groups.forEach(g => {
+    const chip = el('button', `cchip${g.items.every(i => i.tone !== 'worse') ? ' differs' : ''}`); chip.type = 'button'; chip.append(g.label, el('i', '', String(g.items.length)));
+    chip.title = `Go to ${g.label}`; chip.onclick = () => document.getElementById(`ad-${a.id}-${g.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); chips.append(chip);
+  });
+  sum.append(n, chips); wrap.append(sum);
+  const copy = async data => { const result = await command('addon-copy', { addon: a.id, ...data }); if (result.ok && result.notice) toast(result.notice); };
+  for (const g of r.groups) g.items.forEach((item, i) => {
+    const card = el('div', `pc${item.tone === 'worse' ? '' : ' differs'}`), tt = el('span', 'tt'), vals = el('div', `vals${r.sides.length === 1 ? ' one' : ''}`), fix = el('div', 'fixl');
+    if (!i) card.id = `ad-${a.id}-${g.id}`;
+    tt.append(el('span', 'cat', g.label), item.title);
+    for (const side of r.sides) vals.append(checkValue(side, item.values[side] || 'not found', item.bad[side]));
+    const action = item.action ? fbtn(item.action.label, 'copy', 'Copy to the clipboard', () => copy({ card: item.id })) : el('span', 'act');
+    action.classList.add('act'); card.append(icon('alert'), tt, action, vals);
+    if (item.fix.length) { fix.append(el('i', '', 'How to fix: '), ...item.fix.map(x => (typeof x === 'string' ? x : el('code', '', x.code)))); card.append(fix); }
+    if (item.commands.length) {
+      const cmds = el('div', 'cmds');
+      item.commands.forEach((c, k) => {
+        const row = el('div', 'cmd'), found = el('div', 'found', c.found); found.append(el('span', '', c.where)); row.append(found);
+        if (c.command) row.append(fbtn('Copy', 'copy', 'Copy this command', () => copy({ card: item.id, command: k })), el('code', '', c.command)); else row.classList.add('plain');
+        cmds.append(row);
+      });
+      card.append(cmds);
+    }
+    wrap.append(card);
+  });
+  if (r.passed.length) { const box = el('div', 'box cpass'), line = el('div', 'cpass-line'); line.append(icon('check'), el('b', '', `${r.passed.length} clean`), el('span', 'names', r.passed.map(p => p.name).join(', '))); box.append(line); wrap.append(box); }
+  if (r.note) wrap.append(el('div', 'sec-note', r.note));
+  return wrap;
 }

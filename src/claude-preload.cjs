@@ -95,7 +95,7 @@ if (origin === 'chrome-extension://fcoeoabgfenejglbffodgkkbkcdhcgfn') {
       dnr.HeaderOperation = { SET: 'set', REMOVE: 'remove', APPEND: 'append' };
       dnr.ResourceType = { XMLHTTPREQUEST: 'xmlhttprequest', OTHER: 'other', WEBSOCKET: 'websocket' };
       api('action', ['getUserSettings','setBadgeBackgroundColor','setBadgeText','setBadgeTextColor','setTitle'], ['onClicked']);
-      api('webNavigation', ['getAllFrames'], ['onBeforeNavigate','onCommitted','onCompleted']);
+      api('webNavigation', ['getAllFrames'], ['onBeforeNavigate','onCommitted','onCompleted','onErrorOccurred']);
       api('notifications', ['create','clear'], ['onClicked']);
       api('downloads', ['download','search'], ['onChanged']);
       api('permissions', ['contains','remove'], ['onAdded','onRemoved']);

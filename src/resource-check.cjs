@@ -194,9 +194,11 @@ function findings(view) {
 }
 // Everything the Files tab of Differences shows. live = null when the Live side did not load this page.
 function filesView({ hostfile, live, pageURL, ruleIP = '', measuring = false }) {
-  const old = oldGroups(hostfile, pageURL), view = { measured: Boolean(live), measuring, ruleIP, rows: [], old, errors: [], dropped: hostfile.dropped + (live?.dropped || 0) };
+  const old = oldGroups(hostfile, pageURL), view = { measured: Boolean(live), measuring, ruleIP, rows: [], alone: [], old, errors: [], dropped: hostfile.dropped + (live?.dropped || 0) };
+  const row = (f, side, h, l) => ({ key: f.key, url: f.url, name: fileName(f.url), path: displayPath(f.url, pageURL), type: f.type, canOpen: /^https?:/i.test(f.url), side, hostfile: h, live: l });
+  // Live was not loaded for this page: what failed in the tab itself, on the new server alone (1.4.0-beta.4).
+  if (!live) view.alone = [...hostfile.failures.values()].map(f => row(f, 'hostfile', cell(f, hostfile.pageServer), { failed: false, status: 'Not measured' }));
   if (live) {
-    const row = (f, side, h, l) => ({ key: f.key, url: f.url, name: fileName(f.url), path: displayPath(f.url, pageURL), type: f.type, canOpen: /^https?:/i.test(f.url), side, hostfile: h, live: l });
     const missing = (record, key) => ({ failed: false, status: record.loaded.get(key) || 'Not requested' });
     for (const f of hostfile.failures.values()) {
       const lf = live.failures.get(f.key);

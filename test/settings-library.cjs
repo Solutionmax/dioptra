@@ -20,7 +20,7 @@ const path = require('node:path');
     const errors=[];ui.on('pageerror',error=>errors.push(error.message));
     const cmd=(action,data)=>ui.evaluate(([a,d])=>window.browser.command(a,d),[action,data]);
     await ui.locator('#settings').click();
-    assert.equal(await ui.locator('#settings-menu button').count(),6,'Settings provides six reachable categories');
+    assert.equal(await ui.locator('#settings-menu button').count(),7,'Settings provides seven reachable categories');
     await ui.locator('#settings-menu [data-settings-category="general"]').click();
     assert.ok(await ui.locator('#open-onboarding').isVisible(),'General exposes the real setup guide');
     await ui.locator('#settings-back').click();

@@ -69,7 +69,9 @@ const SHOT_ICONS = {
   image: ['M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z', 'circle 9 9 2', 'm21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21'],
   check: ['M20 6 9 17l-5-5'],
   folder: ['M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'],
-  alert: ['circle 12 12 9', 'M12 8v5', 'M12 16h.01']
+  alert: ['circle 12 12 9', 'M12 8v5', 'M12 16h.01'],
+  zoom: ['circle 11 11 6.5', 'm20 20-4.3-4.3'],
+  panes: ['M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z', 'M12 4v16']
 };
 function shotIcon(name) {
   const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
@@ -112,6 +114,7 @@ function shotProgress(d) {
   const actions = el('div', 'shot-actions one'); actions.append(shotLink('cancel', 'mem-btn', '', 'Cancel'));
   return [box, actions];
 }
+const SHOT_QUALITY = { original: ['PNG, Retina.', 'Every pixel, the largest file.'], sharp: ['JPEG 90 %, Retina.', 'Looks the same as the original, about 5× smaller.'], small: ['JPEG 80 %, half the width.', 'For email and tickets.'] };
 function shotChoose(d) {
   const out = [el('div', 'shot-label', 'Area')], area = el('div', 'shot-opts'); area.setAttribute('role', 'radiogroup'); area.setAttribute('aria-label', 'Area');
   area.append(shotOption('visible', 'visible', 'Visible area', d.notes.visible, d.area === 'visible'), shotOption('full', 'full', 'Full page', d.notes.full, d.area === 'full'));
@@ -125,9 +128,14 @@ function shotChoose(d) {
     }
     out.push(el('div', 'shot-label', 'Panes'), seg, mini);
   }
+  // Quality: how the picture is saved. Main keeps the choice; the note says what the chosen one gives.
+  const quality = el('div', 'shot-seg three'), [kind, why] = SHOT_QUALITY[d.quality] || SHOT_QUALITY.sharp, qnote = el('p', 'shot-qnote');
+  quality.setAttribute('role', 'radiogroup'); quality.setAttribute('aria-label', 'Quality');
+  quality.append(shotLink('q-original', '', '', 'Original', d.quality === 'original'), shotLink('q-sharp', '', '', 'Sharp', d.quality === 'sharp'), shotLink('q-small', '', '', 'Small', d.quality === 'small'));
+  qnote.append(el('b', '', kind), ` ${why}`); out.push(el('div', 'shot-label', 'Quality'), quality, qnote);
   if (d.area === 'full' && d.lazy) { const note = el('p', 'shot-lazy'); note.append(shotIcon('image'), el('span', '', `This page loads ${d.lazy} image${d.lazy === 1 ? '' : 's'} only when you scroll. Full page scrolls ${d.compare && d.panes === 'both' ? 'both pages' : 'the page'} to the bottom first, so they are in the picture.`)); out.push(note); }
   const actions = el('div', 'shot-actions'); actions.append(shotLink('download', 'mem-btn primary', 'download', 'Download'), shotLink('copy', 'mem-btn', 'copy', 'Copy'));
-  return [...out, actions, el('p', 'shot-foot', 'Download saves a PNG in Downloads. Copy puts it on the clipboard.')];
+  return [...out, actions, el('p', 'shot-foot', 'Download saves the picture in Downloads, as JPEG (Sharp, Small) or PNG (Original). Copy puts it on the clipboard.')];
 }
 function shotCard(d) {
   const head = el('div', 'shot-head'); head.append(shotIcon('camera'), el('strong', '', 'Screenshot'));
@@ -136,8 +144,40 @@ function shotCard(d) {
   if (d.state === 'done' || d.state === 'error') return [head, ...shotResult(d)];
   return [head, ...shotChoose(d)];
 }
+// --- zoom pill in the address bar: − and +, the common steps, Reset. Links are zoom actions for the main process.
+function zoomLink(action, className, label, target = 0) { const a = el('a', className, label); a.href = `https://card.invalid/zoom-${action}/${target}`; return a; }
+function zoomCard(d) {
+  const head = el('div', 'shot-head'), row = el('div', 'zoom-row'), steps = el('div', 'zoom-steps'), key = d.mac ? '⌘' : 'Ctrl';
+  head.append(shotIcon('zoom'), el('strong', '', 'Zoom'));
+  const minus = zoomLink('out', '', '−'), plus = zoomLink('in', '', '+');
+  minus.setAttribute('aria-label', 'Zoom out'); plus.setAttribute('aria-label', 'Zoom in');
+  row.append(minus, el('b', '', d.label), plus);
+  for (const percent of [75, 90, 100, 110, 125, 150]) {
+    const step = zoomLink('set', percent === d.percent ? 'on' : '', String(percent), percent);
+    step.setAttribute('aria-label', `${percent}%`); step.setAttribute('aria-pressed', String(percent === d.percent)); steps.append(step);
+  }
+  const out = [head, el('div', 'shot-label', 'Size of the page'), row, steps];
+  if (d.compare) { const note = el('p', 'zoom-both'); note.append(shotIcon('panes'), el('span', '', 'Compare: both panes zoom together, so they stay side by side.')); out.push(note); }
+  const actions = el('div', 'shot-actions one'), keys = el('p', 'zoom-keys');
+  actions.append(zoomLink('reset', 'mem-btn', 'Reset to 100%'));
+  keys.append(el('kbd', '', `${key} +`), ' ', el('kbd', '', `${key} −`), ' zoom · ', el('kbd', '', `${key} 0`), ' reset');
+  return [...out, actions, keys];
+}
 const cards = {
   shot: shotCard,
+  zoom: zoomCard,
+  // What an add-on found on the page of this tab (a tab without a domain rule has no Differences to show it in).
+  addon(d) {
+    const out = [];
+    for (const item of d.items) {
+      const head = el('div', 'card-head', item.name), list = el('div', 'addon-found');
+      head.append(el('span', 'card-sub', item.summary));
+      for (const line of item.lines) { const row = el('div', `addon-line${line.threat ? ' threat' : ''}`); row.append(el('small', '', line.label), el('b', '', line.text)); if (line.value) row.append(el('code', '', line.value)); list.append(row); }
+      out.push(head, list);
+      if (item.note) out.push(el('p', 'addon-note', item.note));
+    }
+    return out.length ? out : [el('div', 'card-head', 'Nothing found')];
+  },
   cert(d) {
     const head = el('div', 'card-head ok-head', 'Certificate valid'), list = el('dl');
     row(list, 'Issued to', d.subject);

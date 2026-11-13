@@ -1,11 +1,14 @@
-// Joins the pictures of the camera button into one PNG: a title line, then per pane a label bar (NEW SERVER or LIVE, IP,
+// Joins the pictures of the camera button into one picture: a title line, then per pane a label bar (NEW SERVER or LIVE, IP,
 // how it was reached, reverse DNS) above the page. Runs in the window UI because a canvas needs a page; the main process
 // calls window.composeShot(spec) and saves or copies the result. Drawn at the scale of the captures (2x on Retina).
+// spec.quality: original is a PNG at that scale, sharp a JPEG of 90 % at that scale, small a JPEG of 80 % at half of it.
+// spec.png: the same picture as PNG anyway (the clipboard takes PNG only).
 'use strict';
 (() => {
   const PAD = 12, GAP = 12, TOP = 46, BAR = 44;
   const C = { tint: '#f2f6fb', card: '#ffffff', line: '#dbe5f2', ink: '#0e1726', ink2: '#4c6384', ink3: '#7b90af',
     blue: '#2e90fa', blueInk: '#175cd3', blueSoft: '#e8f1fd', green: '#12b76a', greenInk: '#027a48', greenSoft: '#e6f7ef' };
+  const QUALITY = { original: ['image/png', 1, 1], sharp: ['image/jpeg', 0.9, 1], small: ['image/jpeg', 0.8, 0.5] };
   const load = data => new Promise((resolve, reject) => { const image = new Image(); image.onload = () => resolve(image); image.onerror = () => reject(new Error('A capture could not be read.')); image.src = `data:image/png;base64,${data}`; });
   function text(g, value, x, y, font, color, align = 'left') { g.font = font; g.fillStyle = color; g.textAlign = align; g.fillText(value, x, y); return g.measureText(value).width; }
   function labelBar(g, pane, x, y, width) {
@@ -24,11 +27,14 @@
     await Promise.all(['700 15px "Plus Jakarta Sans"', '600 12px "Plus Jakarta Sans"', '700 14px "JetBrains Mono"', '500 12px "JetBrains Mono"'].map(f => document.fonts.load(f)));
     const panes = await Promise.all(spec.panes.map(async p => ({ ...p, images: await Promise.all(p.tiles.map(t => load(t.data))) })));
     // The scale of the captures: device pixels per CSS pixel, so text and page stay sharp together.
-    const scale = Math.max(1, ...panes.map(p => p.images[0].naturalWidth / p.width));
+    const [type, quality, part] = QUALITY[spec.quality] || QUALITY.original, format = spec.png ? 'image/png' : type;
+    const scale = Math.max(1, ...panes.map(p => p.images[0].naturalWidth / p.width)) * part;
     const width = PAD * 2 + panes.reduce((sum, p) => sum + p.width, 0) + GAP * (panes.length - 1), tallest = Math.max(...panes.map(p => p.height));
     const canvas = document.createElement('canvas'); canvas.width = Math.ceil(width * scale); canvas.height = Math.ceil((TOP + BAR + tallest + PAD) * scale);
     const g = canvas.width <= 32767 && canvas.height <= 32767 ? canvas.getContext('2d') : null;
     if (!g) throw new Error('The picture is too large to make. Try Visible area or one pane.');
+    g.imageSmoothingQuality = 'high'; // Small scales Retina tiles down: keep text legible
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, canvas.width, canvas.height); // JPEG has no alpha: white, not black, under any gap
     g.scale(scale, scale); g.textBaseline = 'middle';
     g.fillStyle = C.tint; g.fillRect(0, 0, width, TOP + BAR + tallest + PAD);
     const host = text(g, spec.host, PAD + 2, TOP / 2, '700 15px "Plus Jakarta Sans"', C.ink);
@@ -43,10 +49,10 @@
       if (note) text(g, note, x + p.width / 2, TOP + BAR + p.height + 18, '600 12px "Plus Jakarta Sans"', C.ink3, 'center');
       x += p.width + GAP;
     }
-    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, format, quality));
     if (!blob) throw new Error('The picture is too large to save.');
     const bytes = new Uint8Array(await blob.arrayBuffer()); let binary = '';
     for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-    return { png: btoa(binary), width: canvas.width, height: canvas.height };
+    return { data: btoa(binary), type: format, width: canvas.width, height: canvas.height };
   };
 })();

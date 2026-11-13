@@ -46,6 +46,37 @@ const { execFileSync } = require('node:child_process');
     fs.mkdirSync('artifacts',{recursive:true});await ui.screenshot({path:'artifacts/workspace-compare.png'});
     const geometry=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].contentView.children.filter(v=>v.webContents.getURL().startsWith('http://localhost:')).map(v=>v.getBounds()));
     assert.equal(geometry.length,2); assert.ok(geometry[0].x+geometry[0].width<=geometry[1].x);
+    { // Zoom: one size per tab, on both Compare panes (two sessions); pill, pane chips, card, keys; kept over navigation; another tab keeps its own.
+      const mod=[process.platform==='darwin'?'meta':'control'];
+      const press=(live,...keys)=>app.evaluate(({webContents,session},[live,keys,modifiers])=>{const wc=webContents.getAllWebContents().find(w=>/^http:/.test(w.getURL())&&(w.session===session.fromPartition('live-comparison'))===live);wc.focus();for(const keyCode of keys){wc.sendInputEvent({type:'keyDown',keyCode,modifiers});wc.sendInputEvent({type:'keyUp',keyCode,modifiers});}},[live,keys,mod]);
+      const sizes=()=>app.evaluate(({webContents,session})=>webContents.getAllWebContents().filter(w=>/^http:/.test(w.getURL())).map(w=>`${w.session===session.fromPartition('live-comparison')?'live':'host'} ${Math.round(w.getZoomFactor()*100)}`).sort());
+      const pill=()=>ui.evaluate(()=>[document.querySelector('#zoom-value').textContent,document.querySelector('#zoom').classList.contains('on'),!document.querySelector('#zoom-both').hidden,[...document.querySelectorAll('#pane-bars .route-zoom')].map(c=>c.textContent).join(',')]);
+      const card=async code=>{const id=await app.evaluate(({webContents})=>webContents.getAllWebContents().find(w=>w.getURL().endsWith('card.html'))?.id||0);assert.ok(id,'zoom card is open');return app.evaluate(({webContents},[id,code])=>webContents.fromId(id).executeJavaScript(code),[id,code]);};
+      const cardClick=async href=>assert.ok(await card(`(()=>{const l=document.querySelector('a[href="https://card.invalid/zoom-${href}"]');if(l)l.click();return Boolean(l);})()`),href);
+      const waitPill=async want=>{const until=Date.now()+10000;let got;while(Date.now()<until){got=await pill();if(JSON.stringify(got)===JSON.stringify(want))return;await new Promise(r=>setTimeout(r,100));}assert.deepEqual(got,want);};
+      assert.deepEqual(await pill(),['100%',false,true,''],'quiet at 100 %, both in Compare, no chips');
+      await press(true,'=','='); await waitPill(['125%',true,true,'125%,125%']);
+      assert.deepEqual(await sizes(),['host 125','live 125'],'keys on the Live pane zoom both panes');
+      await ui.locator('#zoom').click();
+      let text='';for(const until=Date.now()+10000;Date.now()<until&&!/Size of the page/i.test(text);await new Promise(r=>setTimeout(r,100)))text=await card('document.body.innerText').catch(()=>'');
+      assert.match(text,/Zoom/);assert.match(text,/125%/);assert.match(text,/Compare: both panes zoom together, so they stay side by side\./);assert.match(text,/Reset to 100%/);assert.match(text,new RegExp(process.platform==='darwin'?'⌘ \\+':'Ctrl \\+'));
+      assert.equal(await card(`document.querySelector('.zoom-steps a.on').textContent`),'125');
+      await cardClick('out/0'); await waitPill(['110%',true,true,'110%,110%']); assert.equal(await card(`document.querySelector('.zoom-row b').textContent`),'110%','the card follows');
+      await cardClick('set/150'); await waitPill(['150%',true,true,'150%,150%']); assert.deepEqual(await sizes(),['host 150','live 150']);
+      await cardClick('reset/0'); await waitPill(['100%',false,true,'']); assert.deepEqual(await sizes(),['host 100','live 100']);
+      await cardClick('set/125'); await waitPill(['125%',true,true,'125%,125%']); await cmd('card-close');
+      // Kept over navigation, also to another site, and a new tab of the same site has its own size.
+      await cmd('activate',normal.id); await cmd('navigate',`http://127.0.0.1:${port}/final`);
+      await pollUI(async()=>{const s=(await window.browser.command('state')).state;const t=s.tabs.find(t=>t.id===s.activeId);return t.url.includes('127.0.0.1')&&!t.loading;});
+      assert.deepEqual(await sizes(),['host 125','live 125'],'the Live pane keeps its size on another site');
+      await cmd('navigate',`http://localhost:${port}/`);
+      await pollUI(async()=>{const s=(await window.browser.command('state')).state;const t=s.tabs.find(t=>t.id===s.activeId);return /^http:\/\/localhost:\d+\/$/.test(t.url)&&!t.loading&&t.title==='LIVE';});
+      assert.deepEqual(await sizes(),['host 125','live 125']);
+      await cmd('new-tab',`http://localhost:${port}/`); await pollUI(async()=>(await window.browser.command('state')).state.tabs.filter(t=>t.mode==='hostfile'&&!t.loading&&t.title==='HOSTFILE').length===2);
+      await waitPill(['100%',false,false,'']); assert.deepEqual(await sizes(),['host 100','host 125','live 125'],'another tab of the same site keeps its own size');
+      await cmd('close-tab',(await cmd('state')).state.activeId); await cmd('activate',mapped.id); await waitPill(['125%',true,true,'125%,125%']);
+      await press(false,'0'); await waitPill(['100%',false,true,'']); assert.deepEqual(await sizes(),['host 100','live 100'],'reset on the New server pane resets both');
+    }
     { // Resize the Compare panes: layout, limits, Escape, keyboard, reset and persistence. The drag itself needs a real mouse: test/compare-drag.cjs.
       const panes=async()=>[...(await cmd('state')).state.paneLayout].sort((a,b)=>a.page.x-b.page.x);
       const percent=async()=>Math.round((await cmd('state')).state.compareRatio*100);
@@ -215,6 +246,6 @@ const { execFileSync } = require('node:child_process');
     app=await launch();const ui2=await app.firstWindow();await ui2.waitForFunction(()=>window.browser);
     const restored=(await ui2.evaluate(()=>window.browser.command('state'))).state;
     assert.equal(restored.library.bookmarks.length,1);assert.ok(restored.library.downloads.some(d=>d.state==='completed'));assert.equal(restored.sslVerification,true);assert.equal(restored.rules[0].skipSSL,true);
-    console.log('PASS comparison distinct actual IPs, native routing, independent redirect, banners, find, bookmarks, reopen, TLS switch, downloads, history, persistence');
+    console.log('PASS comparison distinct actual IPs, native routing, zoom on both panes, independent redirect, banners, find, bookmarks, reopen, TLS switch, downloads, history, persistence');
   } catch(error) { console.error('Workspace state',JSON.stringify(globalThis.lastUI ? await globalThis.lastUI.evaluate(()=>window.browser.command('state')).catch(()=>null) : null)); throw error; } finally {if(app)await quit(app);for(const server of [host,live,tls]){server.closeAllConnections();server.close();}fs.rmSync(profile,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exit(1);});

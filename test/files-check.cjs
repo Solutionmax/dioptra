@@ -111,17 +111,17 @@ async function inside() {
     assert.match(await liveChips.getAttribute('title'), /^1 file did not load here\. It fails on the new server too, so it is not a migration difference\./);
     await shot('files-1-compare.png');
 
-    // 2. The chip opens Differences on the Files tab; the Live record stays after the Live pane closes.
+    // 2. The chip opens Differences on the Files part; the Live record stays after the Live pane closes.
     await hostChips.first().click();
     const box = ui.locator('#differences');
-    await box.getByText('What stands out').waitFor();
+    await box.locator('.diff-menu').waitFor();
+    const menu = id => box.locator(`.dm-row[data-part="${id}"]`), over = id => box.locator(`.ov-part[data-part="${id}"]`), flat = async l => (await l.innerText()).replace(/\s+/g, ' ').trim();
     await wait(async () => (await st()).view === 'differences' && (await st()).differences.status === 'done', 'Differences report');
-    assert.match(await box.locator('.subtabs button[aria-pressed=true]').innerText(), /^Files\s*5$/, 'the Files tab with its count of files failing only on Hostfile');
-    const kpi = box.locator('.kpis .kpi').nth(1);
-    await wait(async () => (await kpi.locator('.n').innerText()) === '5 failed', 'Files card');
-    assert.equal(await kpi.locator('.lbl').textContent(), 'Files');
-    assert.equal(await kpi.locator('.s').innerText(), '+2 from old server · +1 on both');
-    assert.match(await kpi.getAttribute('class'), /\balert\b/);
+    assert.equal(await box.locator('.dm-row[aria-current=true] strong').innerText(), 'Files', 'the Files part is open');
+    const tag = menu('files').locator('.stag');
+    await wait(async () => (await tag.innerText()) === '5 failed', 'Files tag with the count of files failing only on Hostfile');
+    assert.match(await tag.getAttribute('class'), /\bis-fix\b/);
+    assert.equal((await flat(box.locator('.dch'))).toLowerCase(), 'files images, styles and scripts that failed 5 failed built in reload both copy list');
     const rows = box.locator('.dscroll.files > div > table').first().locator('tbody tr');
     assert.equal(await rows.count(), 6);
     const row = name => rows.filter({ has: ui.locator('.fname', { hasText: name }) }).innerText();
@@ -132,14 +132,21 @@ async function inside() {
     assert.match(await row('admin-ajax.php'), /\/wp-admin\/admin-ajax\.php\?action=get_refreshed_fragments[\s\S]*background request\s+500 Internal Server Error\s+200 OK/);
     assert.match(await row('front.js'), /http:\/\/northwind-bakery\.test\/wp-content\/plugins\/cookie-notice\/js\/front\.js[\s\S]*script\s+Blocked: http on https\s+Blocked: http on https\s+On both/);
     assert.match(await rows.filter({ hasText: 'front.js' }).getAttribute('class'), /\bboth\b/);
-    const findings = (await box.locator('.diff-side .finding').allInnerTexts()).map(t => t.replace(/\s+/g, ' ').trim());
+    // The findings are still in the state (Ask Claude sends them); the Overview shows the worst three of the part.
+    const findings = (await st()).files.findings.map(f => `${f.title}${f.detail ? ` ${f.detail}` : ''}`);
     for (const text of ['Stylesheet style.css fails on Hostfile (404 Not Found) but loads on Live. Pages on the new server look unstyled.',
       'Stylesheet frontend.min.css is refused on Hostfile. The new server sends a text/html page instead of CSS.',
       '2 images on the new server pane come from the old server. media.northwind-bakery.test has no domain rule. They break when the old server goes away.',
       'JavaScript error only on Hostfile: jQuery is not defined. jquery.min.js is blocked by the firewall (403, imunify360-webshield).',
-      'Script front.js is blocked on both servers: http on an https page.', 'Server software differs: Hostfile nginx/1.26.2, Live LiteSpeed.']) assert.ok(findings.includes(text), `finding: ${text}\n${findings.join('\n')}`);
+      'Script front.js is blocked on both servers: http on an https page.']) assert.ok(findings.includes(text), `finding: ${text}\n${findings.join('\n')}`);
     assert.ok(findings.some(t => /^2 more files fail only on Hostfile: (brand\.woff2 \(CORS\), admin-ajax\.php \(500\)|admin-ajax\.php \(500\), brand\.woff2 \(CORS\))\.$/.test(t)), findings.join('\n'));
-    assert.match(await box.locator('.diff-side .finding.both').innerText(), /front\.js/);
+    await menu('overview').click(); await box.locator('.dverdict.worse').waitFor();
+    assert.match(await flat(box.locator('.dverdict .sv-fx')), /need(s)? a fix on the new server first: (.*, )?Files[,.]/);
+    assert.equal(await box.locator('.dstep b').first().innerText(), 'Fix before the switch');
+    assert.equal(await flat(over('files').locator('.ov-head')), 'Files Only on Hostfile · 2 from old server · 1 on both 5 failed ›');
+    assert.deepEqual(await over('files').locator('.ov-tops li').allInnerTexts(), ['Stylesheet style.css fails on Hostfile (404 Not Found) but loads on Live', 'Stylesheet frontend.min.css is refused on Hostfile', '2 images on the new server pane come from the old server', 'and 2 more']);
+    assert.equal(await menu('headers').locator('.stag.is-info').count(), 1, 'the header differences are to read, not judged');
+    await over('files').click(); await box.locator('.dscroll.files').waitFor();
     const old = box.locator('.fsec').filter({ hasText: 'Loaded from the old server' });
     await wait(async () => /web03\.oldhost\.example/.test(await old.innerText()), 'reverse name of the old server');
     assert.match((await old.innerText()).replace(/\s+/g, ' '), /media\.northwind-bakery\.test has no domain rule, so the new server pane fetched these files from 198\.51\.100\.24 \(web03\.oldhost\.example\)\. They break when the old server goes away\./);
@@ -169,7 +176,7 @@ async function inside() {
 
     // 5. Reload both from Differences: stays in Differences, measures Live again in a hidden view, same result.
     await single.first().click();
-    await box.getByText('What stands out').waitFor();
+    await box.locator('.diff-menu').waitFor();
     await box.getByRole('button', { name: 'Reload both' }).click();
     await wait(async () => (await st()).files?.measuring === true, 'measuring after Reload both', 5000);
     await wait(async () => { const s = await st(); return s.view === 'differences' && s.files && !s.files.measuring && s.files.counts.only === 5 && s.files.counts.both === 1 && s.files.counts.old === 2 && s.files.counts.errors === 1; }, 'measured again');
@@ -196,8 +203,17 @@ async function inside() {
     assert.equal((await cmd('navigate', `${home}about/`)).ok, true);
     await wait(async () => { const t = (await st()).tabs.find(t => t.id === host.id); return !t.loading && t.url === `${home}about/` && t.files.failed === 6; }, 'other page loaded');
     assert.equal((await cmd('view', 'differences')).ok, true);
-    await wait(async () => (await kpi.locator('.n').innerText().catch(() => '')) === 'Not measured', 'Not measured card');
-    assert.equal(await box.locator('.dscroll.files .dempty').innerText(), 'Open Compare to measure files.');
+    // The tab itself knows what failed on the new server: the part says the same as the label in the server bar.
+    await wait(async () => (await tag.innerText().catch(() => '')) === '6 failed', 'the files that failed on the new server alone');
+    assert.match(await tag.getAttribute('class'), /\bis-check\b/);
+    assert.equal(await ui.locator('#route-bar .route-failed').first().innerText(), '6 files failed');
+    assert.match(await box.locator('.dscroll.files .fnote').first().innerText(), /^Failed on the new server while this tab loaded the page\. Open Compare to check them on Live/);
+    assert.deepEqual(await box.locator('.dscroll.files thead th').evaluateAll(n => n.map(x => x.textContent)), ['File', 'Loaded as', 'Hostfile']);
+    assert.equal(await box.locator('.dscroll.files tbody tr').count(), 6);
+    assert.equal(await box.locator('.dscroll.files .pill').count(), 0, 'no "Only Hostfile" claim without a Live measurement');
+    await menu('overview').click();
+    assert.equal(await flat(over('files').locator('.ov-head small')), 'New server only, open Compare to check them on Live');
+    assert.equal(await box.locator('.ov-part[data-part=files]').evaluate(n => n.parentElement.previousElementSibling.querySelector('b').textContent), 'Look at once');
     assert.match(await ui.locator('#route-bar .route-failed').first().getAttribute('title'), /Open Compare to check them on Live/);
 
     assert.doesNotMatch(stderr, /observer failed|main process error|unhandled rejection/i, stderr);
